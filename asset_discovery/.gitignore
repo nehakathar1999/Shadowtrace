@@ -1,0 +1,15 @@
+*.pyc
+*.pyd
+*.pyo
+*.pyc
+*.log
+*.sqlite3
+.DS_Store
+*.env
+*.local
+*.egg-info/
+dist/
+build/
+node_modules/
+dist/
+reports/
