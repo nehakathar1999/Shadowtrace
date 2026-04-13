@@ -116,12 +116,11 @@ function typeColor(type) {
   return "text-cyan-400 bg-cyan-500/[0.05] border-cyan-500/15";
 }
 
-export default function Stats({ theme, onHistorySelect, onHistoryDelete, onHistoryRescan }) {
+export default function Stats({ theme, onHistorySelect }) {
   const [statsData, setStatsData] = useState(INITIAL_STATS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("All");
-  const [isDeleting, setIsDeleting] = useState(null);
 
   useEffect(() => {
     let shouldCancel = false;
@@ -160,37 +159,6 @@ export default function Stats({ theme, onHistorySelect, onHistoryDelete, onHisto
       clearInterval(intervalId);
     };
   }, []);
-
-  const refreshStats = async () => {
-    const response = await fetch(`${API_BASE}/stats`);
-    if (!response.ok) {
-      throw new Error("Failed to refresh stats");
-    }
-    const data = await response.json();
-    setStatsData(data);
-    setError(null);
-  };
-
-  const handleDelete = async (event, scan) => {
-    event.stopPropagation();
-    if (!onHistoryDelete) return;
-    setIsDeleting(scan.reportPath);
-    try {
-      const deleted = await onHistoryDelete(scan);
-      if (deleted) {
-        await refreshStats();
-      }
-    } catch (err) {
-      setError(err?.message || "Failed to delete scan history.");
-    } finally {
-      setIsDeleting(null);
-    }
-  };
-
-  const handleRescan = (event, scan) => {
-    event.stopPropagation();
-    onHistoryRescan?.(scan);
-  };
 
   const filtered = filter === "All" ? statsData.scan_history
     : statsData.scan_history.filter(s => s.type === filter);
@@ -332,7 +300,7 @@ export default function Stats({ theme, onHistorySelect, onHistoryDelete, onHisto
               <table className="w-full border-collapse text-sm scan-history-table">
                 <thead>
                   <tr>
-                    {["TARGET","TYPE","DATE","HOSTS","PORTS","VULNS","RISK SCORE","STATUS","ACTIONS"].map(h => (
+                    {["TARGET","TYPE","DATE","HOSTS","PORTS","VULNS","RISK SCORE","STATUS"].map(h => (
                       <th key={h} className={`text-left py-2.5 px-4 text-[10px] font-bold tracking-widest whitespace-nowrap ${isDark ? 'text-slate-400 border-b border-cyan-400/40 bg-cyan-500/[0.04]' : 'text-gray-500 border-b border-gray-200 bg-gray-100'}`}>{h}</th>
                     ))}
                   </tr>
@@ -366,33 +334,6 @@ export default function Stats({ theme, onHistorySelect, onHistoryDelete, onHisto
                         </td>
                         <td className="py-3 px-4">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${risk.cls}`}>{risk.text}</span>
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={(event) => handleRescan(event, s)}
-                              className={`rounded-md border px-2.5 py-1 text-[10px] font-bold transition ${
-                                isDark
-                                  ? 'border-cyan-400/30 text-cyan-300 hover:bg-cyan-400/10'
-                                  : 'border-blue-200 text-blue-700 hover:bg-blue-50'
-                              }`}
-                            >
-                              Rescan
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(event) => handleDelete(event, s)}
-                              disabled={isDeleting === s.reportPath}
-                              className={`rounded-md border px-2.5 py-1 text-[10px] font-bold transition ${
-                                isDark
-                                  ? 'border-red-400/30 text-red-300 hover:bg-red-400/10 disabled:opacity-50'
-                                  : 'border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50'
-                              }`}
-                            >
-                              {isDeleting === s.reportPath ? 'Deleting...' : 'Delete'}
-                            </button>
-                          </div>
                         </td>
                       </tr>
                     );

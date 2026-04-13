@@ -1134,61 +1134,6 @@ export default function Vulns({ scanData, theme, selectedTarget }) {
           )}
         </div>
 
-        {owasp.enabled && (
-          <div className={`mt-6 rounded-[28px] border px-4 py-4 sm:px-6 ${theme === 'dark' ? 'border-cyan-400/20 bg-[#0f1523]/90' : 'border-cyan-100 bg-white'}`}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <div className={`text-[11px] font-bold tracking-[0.18em] ${theme === 'dark' ? 'text-cyan-300' : 'text-cyan-700'}`}>ADVANCED ANALYSIS</div>
-                <h2 className={`mt-2 text-xl font-semibold ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Parameter fuzzing, auth checks, and workflow review</h2>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <div className={`min-w-[132px] rounded-xl px-4 py-3 ${theme === 'dark' ? 'bg-cyan-400/6 text-cyan-200 ring-1 ring-cyan-400/15' : 'bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100'}`}>
-                  <div className={`text-[10px] font-bold tracking-[0.18em] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>REQUESTS</div>
-                  <div className="mt-1 text-2xl font-mono font-bold">{owasp.requestsMade}</div>
-                </div>
-                <div className={`min-w-[132px] rounded-xl px-4 py-3 ${theme === 'dark' ? 'bg-violet-400/6 text-violet-200 ring-1 ring-violet-400/15' : 'bg-violet-50 text-violet-700 ring-1 ring-violet-100'}`}>
-                  <div className={`text-[10px] font-bold tracking-[0.18em] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>PARAMETERS</div>
-                  <div className="mt-1 text-2xl font-mono font-bold">{owasp.parametersTested}</div>
-                </div>
-                <div className={`min-w-[132px] rounded-xl px-4 py-3 ${theme === 'dark' ? 'bg-amber-400/6 text-amber-200 ring-1 ring-amber-400/15' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
-                  <div className={`text-[10px] font-bold tracking-[0.18em] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>AUTH FINDINGS</div>
-                  <div className="mt-1 text-2xl font-mono font-bold">{owasp.authFindings}</div>
-                </div>
-                <div className={`min-w-[132px] rounded-xl px-4 py-3 ${theme === 'dark' ? 'bg-rose-400/6 text-rose-200 ring-1 ring-rose-400/15' : 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'}`}>
-                  <div className={`text-[10px] font-bold tracking-[0.18em] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>WORKFLOW REVIEW</div>
-                  <div className="mt-1 text-2xl font-mono font-bold">{owasp.businessLogicFindings}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-4 lg:grid-cols-2">
-              <div className={`rounded-2xl border px-4 py-4 ${theme === 'dark' ? 'border-slate-700 bg-slate-900/40' : 'border-slate-200 bg-slate-50'}`}>
-                <div className={`text-[11px] font-bold tracking-[0.18em] ${theme === 'dark' ? 'text-cyan-300' : 'text-cyan-700'}`}>DISCOVERED PARAMETERS</div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {toArray(owasp.advancedAnalysis?.parameter_discovery?.discovered_parameters).length > 0 ? (
-                    toArray(owasp.advancedAnalysis?.parameter_discovery?.discovered_parameters).map((item) => (
-                      <span key={item} className={`rounded-full px-3 py-1 text-xs font-mono ${theme === 'dark' ? 'bg-slate-800 text-slate-200' : 'bg-white text-slate-700 border border-slate-200'}`}>{item}</span>
-                    ))
-                  ) : (
-                    <span className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>No parameters discovered.</span>
-                  )}
-                </div>
-              </div>
-              <div className={`rounded-2xl border px-4 py-4 ${theme === 'dark' ? 'border-slate-700 bg-slate-900/40' : 'border-slate-200 bg-slate-50'}`}>
-                <div className={`text-[11px] font-bold tracking-[0.18em] ${theme === 'dark' ? 'text-amber-300' : 'text-amber-700'}`}>WORKFLOW PATHS</div>
-                <div className="mt-3 flex flex-col gap-2">
-                  {toArray(owasp.advancedAnalysis?.business_logic?.review_paths).length > 0 ? (
-                    toArray(owasp.advancedAnalysis?.business_logic?.review_paths).map((item) => (
-                      <span key={item} className={`text-sm font-mono ${theme === 'dark' ? 'text-slate-200' : 'text-slate-700'}`}>{item}</span>
-                    ))
-                  ) : (
-                    <span className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>No workflow-style paths discovered.</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );

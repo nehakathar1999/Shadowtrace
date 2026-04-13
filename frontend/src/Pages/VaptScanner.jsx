@@ -414,16 +414,21 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
         const meta = JSON.parse(raw);
         if (meta?.target === target) {
           const resumedProgress = Number(meta.progress);
+          const resumedDisplayProgress = Number(meta.displayProgress);
+          const safeDisplayProgress = Number.isFinite(resumedDisplayProgress)
+            ? Math.min(95, Math.max(0, resumedDisplayProgress))
+            : 0;
           const baseProgress = Number.isFinite(resumedProgress)
             ? Math.min(95, Math.max(0, resumedProgress))
             : 0;
+          const monotonicProgress = Math.max(baseProgress, safeDisplayProgress);
           const resumedStage = Number(meta.currentStage);
           const baseStage = Number.isFinite(resumedStage)
             ? Math.min(4, Math.max(0, resumedStage))
-            : Math.min(4, Math.floor(baseProgress / 22));
+            : Math.min(4, Math.floor(monotonicProgress / 22));
 
-          setProgress(baseProgress);
-          setDisplayProgress(Math.max(baseProgress, Number(meta.displayProgress) || 0));
+          setProgress(monotonicProgress);
+          setDisplayProgress(monotonicProgress);
           setCurrentStage(baseStage);
           if (Array.isArray(meta.logs)) setLogs(meta.logs);
           setIsPaused(Boolean(meta.isPaused));
@@ -461,8 +466,11 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
     const intervalId = setInterval(() => {
       setDisplayProgress((prev) => {
         if (isPaused || isCancelled) return prev;
-        if (Math.abs(progress - prev) < 0.35) return progress;
-        return prev + Math.sign(progress - prev) * 0.32;
+        const targetProgress = Math.max(prev, progress);
+        if (targetProgress <= prev) return prev;
+        const step = Math.max(0.18, Math.min(0.9, (targetProgress - prev) * 0.08));
+        if (targetProgress - prev < step) return targetProgress;
+        return prev + step;
       });
     }, 90);
 
@@ -477,6 +485,7 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
   const pushLog = (msg) => setLogs(prev => [...prev, { time: ts(), msg }]);
 
   useEffect(() => {
+    return;
     if (!isSessionReady || logs.length > 0) return;
     const t = [
       setTimeout(() => pushLog(`Starting VAPT scan for target: ${target}`), 300),
@@ -552,8 +561,8 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
         if (Array.isArray(data.logs)) setLogs(data.logs);
         if (typeof data.progress === "number") {
           const nextProgress = Math.max(0, Math.min(100, data.progress));
-          // Prevent visual regressions for multi-host scans where backend
-          // progress updates can occasionally arrive out of order.
+          // Keep progress monotonic even if the page is restored from local
+          // state or backend updates arrive slightly out of order.
           setProgress((prev) => Math.max(prev, nextProgress));
         }
         if (typeof data.stage_index === "number") {
@@ -604,6 +613,7 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
   }, [isPaused, isCancelled, scanDone, isSessionReady, target]);
 
   useEffect(() => {
+    return;
     if (isPaused || isCancelled) return;
 
     const visibleMilestones = [
@@ -1298,7 +1308,7 @@ function VulnsPage({ scanData, theme }) {
 }
 
 // ── App Root ──────────────────────────────────────────────────────────────────
-export default function VaptScanner({ onScanComplete, theme, previewMode = false, onRequireLogin, rescanRequest }) {
+export default function VaptScanner({ onScanComplete, theme, previewMode = false, onRequireLogin }) {
   const [scanTarget, setScanTarget] = useState(() => {
     if (previewMode) return null;
     try {
@@ -1322,17 +1332,6 @@ export default function VaptScanner({ onScanComplete, theme, previewMode = false
       setPage("home");
     }
   }, [page, scanTarget]);
-
-  useEffect(() => {
-    if (previewMode || !rescanRequest?.target) return;
-    setScanResult(null);
-    setScanTarget(rescanRequest.target);
-    try {
-      localStorage.setItem(ACTIVE_SCAN_STORAGE_KEY, rescanRequest.target);
-      localStorage.removeItem(ACTIVE_SCAN_META_STORAGE_KEY);
-    } catch {}
-    setPage("scan");
-  }, [previewMode, rescanRequest]);
 
   const handleScan = (t) => {
     if (previewMode) return;

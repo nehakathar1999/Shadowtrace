@@ -19,6 +19,7 @@ app.add_middleware(
     ],
     allow_origin_regex=r"^https?://("
                        r"localhost|"
+                       r"localhost|"
                        r"127\.0\.0\.1|"
                        r"0\.0\.0\.0|"
                        r"10\.\d+\.\d+\.\d+|"

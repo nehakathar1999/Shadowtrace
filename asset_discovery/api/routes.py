@@ -1676,43 +1676,6 @@ def _persist_scan_to_db(payload: dict):
         db.close()
 
 
-def _delete_scan_records_by_report_path(report_path: str):
-    safe_report_path = _sanitize_report_path(report_path)
-    db = SessionLocal()
-    try:
-        scan = db.query(ScanModel).filter(ScanModel.report_json_path == safe_report_path).first()
-        if scan:
-            asset_ids = [row.id for row in db.query(AssetModel.id).filter(AssetModel.scan_id == scan.id).all()]
-            if asset_ids:
-                db.query(PortModel).filter(PortModel.asset_id.in_(asset_ids)).delete(synchronize_session=False)
-                db.query(VulnerabilityModel).filter(VulnerabilityModel.asset_id.in_(asset_ids)).delete(synchronize_session=False)
-                db.query(InsecureProtocol).filter(InsecureProtocol.asset_id.in_(asset_ids)).delete(synchronize_session=False)
-                db.query(TLSIssue).filter(TLSIssue.asset_id.in_(asset_ids)).delete(synchronize_session=False)
-                db.query(AssetModel).filter(AssetModel.id.in_(asset_ids)).delete(synchronize_session=False)
-
-            owasp_ids = [row.id for row in db.query(OWASPResult.id).filter(OWASPResult.scan_id == scan.id).all()]
-            if owasp_ids:
-                db.query(OWASPFinding).filter(OWASPFinding.owasp_result_id.in_(owasp_ids)).delete(synchronize_session=False)
-                db.query(OWASPResult).filter(OWASPResult.id.in_(owasp_ids)).delete(synchronize_session=False)
-
-            db.delete(scan)
-            db.commit()
-
-        deleted_files = []
-        base_path, _ = os.path.splitext(safe_report_path)
-        for candidate in [safe_report_path, f"{base_path}.txt", f"{base_path}.pdf", f"{base_path}.docx"]:
-            if os.path.exists(candidate):
-                os.remove(candidate)
-                deleted_files.append(candidate.replace("\\", "/"))
-
-        return {"deleted": True, "report_path": safe_report_path, "files_removed": deleted_files}
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-
 def parse_targets(target: str):
     targets = []
 
@@ -2410,14 +2373,6 @@ def remove_scan_schedule(schedule_id: str):
     return {"deleted": True, "schedule_id": schedule_id}
 
 
-@router.delete("/scan-history")
-def delete_scan_history_entry(path: str = Query(...)):
-    result = _delete_scan_records_by_report_path(path)
-    if not result["files_removed"]:
-        raise HTTPException(status_code=404, detail="Scan history entry not found")
-    return result
-
-
 @router.get("/stats")
 def get_stats():
     """Aggregate statistics from all scan reports."""
@@ -2535,7 +2490,6 @@ def get_stats():
         scan_record = {
             "id": 0,
             "target": original_target,
-            "rescanTarget": original_target,
             "type": scan_type,
             "date": date_formatted,
             "hostsUp": active_hosts,

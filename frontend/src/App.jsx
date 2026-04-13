@@ -13,7 +13,6 @@ function App() {
   const [activeNav, setActiveNav] = useState("Scan")
   const [scanData, setScanData] = useState(null)
   const [selectedTarget, setSelectedTarget] = useState(null)
-  const [rescanRequest, setRescanRequest] = useState(null)
   const [theme, setTheme] = useState('light')
   const [authUser, setAuthUser] = useState(() => {
     try {
@@ -103,38 +102,6 @@ function App() {
     }
   }
 
-  const handleHistoryDelete = async (entry) => {
-    if (!entry?.reportPath) return
-    const confirmed = window.confirm(`Delete scan history for ${entry.target}?`)
-    if (!confirmed) return false
-
-    try {
-      const response = await fetch(`${API_BASE}/scan-history?path=${encodeURIComponent(entry.reportPath)}`, {
-        method: "DELETE",
-      })
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}))
-        throw new Error(data?.detail || `Delete failed (${response.status})`)
-      }
-      return true
-    } catch (err) {
-      console.error("Failed to delete scan history entry:", err)
-      window.alert(err?.message || "Failed to delete scan history entry.")
-      return false
-    }
-  }
-
-  const handleHistoryRescan = (entry) => {
-    const target = entry?.rescanTarget || entry?.target
-    if (!target) return
-    setSelectedTarget(target)
-    setActiveNav("Scan")
-    setRescanRequest({
-      target,
-      nonce: Date.now(),
-    })
-  }
-
   // Landing page is temporarily disabled so the app opens directly on auth.
   // if (entryStage === "landing") {
   //   return (
@@ -169,9 +136,9 @@ function App() {
         authUser={authUser}
       />
       <main style={{ paddingTop: '64px' }}>
-        {activeNav === "Scan" && <VaptScanner onScanComplete={onScanComplete} theme={theme} previewMode={previewMode} onRequireLogin={() => setEntryStage("auth")} rescanRequest={rescanRequest} />}
+        {activeNav === "Scan" && <VaptScanner onScanComplete={onScanComplete} theme={theme} previewMode={previewMode} onRequireLogin={() => setEntryStage("auth")} />}
         {activeNav === "Vulns" && <Vulns scanData={scanData} theme={theme} selectedTarget={selectedTarget} />}
-        {activeNav === "Stats" && <Stats theme={theme} onHistorySelect={onHistorySelect} onHistoryDelete={handleHistoryDelete} onHistoryRescan={handleHistoryRescan} />}
+        {activeNav === "Stats" && <Stats theme={theme} onHistorySelect={onHistorySelect} />}
         {activeNav === "Map" && <div style={{ height: "100vh", background: theme === 'dark' ? '#0a0f1a' : '#f8fafc' }} />}
       </main>
     </>
