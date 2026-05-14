@@ -4,11 +4,15 @@ from pydantic import BaseModel
 from scanners.ping_sweep import threaded_ping_sweep
 from scanners.port_scanner import threaded_port_scan
 from scanners.service_detector import detect_services
+from scanners.asset_inventory import enumerate_subdomains, lookup_domain_intelligence, summarize_inventory
+from scanners.traffic_monitor import sniff_network_traffic
+from scanners.credential_scanner import attempt_ssh_login
 from intelligence.device_classifier import classify_device
 from intelligence.os_fingerprint import detect_os_details
 from intelligence.protocol_detector import detect_insecure_protocols
 from intelligence.tls_analyzer import analyze_tls
 from intelligence.vuln_assessor import assess_vulnerabilities
+from intelligence.risk_engine import prioritize_asset_vulnerabilities
 from intelligence.owasp_top10 import scan_owasp_top_10
 from intelligence.product_analysis import executive_summary
 from intelligence.web_advanced import (
@@ -467,6 +471,8 @@ def _collect_vulnerability_rows(payload: dict) -> list[dict]:
                 "title": vulnerability.get("title") or "Unnamed vulnerability",
                 "description": vulnerability.get("description") or "No description available.",
                 "remediation": vulnerability.get("remediation") or "Apply the vendor fix, reduce exposure, and verify the remediation with a rescan.",
+                "cwe_ids": vulnerability.get("cwe_ids") or [],
+                "weakness_summary": vulnerability.get("weakness_summary") or "",
                 "status": _normalize_status(vulnerability),
                 "confidence": vulnerability.get("confidence") or "unknown",
                 "confidence_score": vulnerability.get("confidence_score"),
@@ -528,6 +534,277 @@ def _collect_protocol_rows(payload: dict, field_name: str) -> list[list[str]]:
             ])
     label = "observations" if field_name == "tls_issues" else "findings"
     return rows or [[f"No {label} detected", "-", "-", "-"]]
+
+
+def _format_report_label(value: str) -> str:
+    return str(value or "").replace("_", " ").strip().title()
+
+
+def _bool_text(value) -> str:
+    if isinstance(value, bool):
+        return "On" if value else "Off"
+    return _safe_text(value)
+
+
+def _stringify_report_value(value, default="N/A") -> str:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return _bool_text(value)
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        text = value.strip()
+        return text or default
+    if isinstance(value, list):
+        parts = []
+        for item in value[:6]:
+            if isinstance(item, dict):
+                label = item.get("label") or item.get("title") or item.get("type") or item.get("id") or item.get("value")
+                if label:
+                    parts.append(str(label))
+            else:
+                item_text = str(item).strip()
+                if item_text:
+                    parts.append(item_text)
+        return ", ".join(parts) if parts else default
+    if isinstance(value, dict):
+        parts = []
+        for key, item in list(value.items())[:6]:
+            item_text = _stringify_report_value(item, default="")
+            if item_text:
+                parts.append(f"{_format_report_label(key)}: {item_text}")
+        return "; ".join(parts) if parts else default
+    text = str(value).strip()
+    return text or default
+
+
+def _related_subdomains_for_asset(payload: dict, asset: dict) -> list[dict]:
+    inventory = payload.get("asset_inventory") or {}
+    subdomains = inventory.get("subdomains") or []
+    host_ip = asset.get("resolved_ip") or asset.get("ip")
+    if not host_ip:
+        return []
+    return [
+        item for item in subdomains
+        if isinstance(item, dict) and item.get("resolved_ip") == host_ip
+    ]
+
+
+def _collect_service_intel_rows(payload: dict) -> list[list[str]]:
+    rows = []
+    for asset in payload.get("assets", []) or []:
+        host = asset.get("domain") or asset.get("hostname") or asset.get("ip") or "Unknown"
+        for port_info in asset.get("open_ports", []) or []:
+            banner = str(port_info.get("banner") or "").strip()
+            scripts = port_info.get("scripts") or []
+            if not banner and not scripts:
+                continue
+            script_summary = "; ".join(
+                f"{script.get('id') or 'script'}: {_stringify_report_value(script.get('output'), default='')}"
+                for script in scripts[:2]
+                if isinstance(script, dict)
+            )
+            rows.append([
+                host,
+                str(port_info.get("port", "-")),
+                _safe_text(port_info.get("service"), "unknown"),
+                _safe_text(port_info.get("banner_source"), "socket").upper(),
+                _stringify_report_value(banner, default="No banner captured."),
+                script_summary or "No NSE script output.",
+            ])
+    return rows or [["No service intelligence captured", "-", "-", "-", "-", "-"]]
+
+
+def _collect_domain_intel_rows(payload: dict) -> list[list[str]]:
+    domain_intelligence = (payload.get("asset_inventory") or {}).get("domain_intelligence") or {}
+    rows = []
+    report_url = domain_intelligence.get("report_url")
+    if report_url:
+        rows.append(["Report URL", _safe_text(report_url)])
+    note = domain_intelligence.get("note")
+    if note:
+        rows.append(["Note", _safe_text(note)])
+    for item in domain_intelligence.get("display_details") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("kind"):
+            continue
+        value = _stringify_report_value(item.get("value"), default="")
+        if not value:
+            continue
+        rows.append([
+            item.get("label") or _format_report_label(item.get("key") or "Detail"),
+            value,
+        ])
+    return rows or [["No domain intelligence recorded", "-"]]
+
+
+def _collect_subdomain_rows(payload: dict) -> list[list[str]]:
+    subdomains = (payload.get("asset_inventory") or {}).get("subdomains") or []
+    rows = []
+    for item in subdomains:
+        if not isinstance(item, dict):
+            continue
+        rows.append([
+            _safe_text(item.get("subdomain"), "-"),
+            _safe_text(item.get("resolved_ip"), "unresolved"),
+            _safe_text(item.get("source"), "inventory"),
+        ])
+    return rows or [["No subdomains discovered", "-", "-"]]
+
+
+def _collect_related_subdomain_rows(payload: dict) -> list[list[str]]:
+    rows = []
+    for asset in payload.get("assets", []) or []:
+        host = asset.get("domain") or asset.get("hostname") or asset.get("ip") or "Unknown"
+        for item in _related_subdomains_for_asset(payload, asset):
+            rows.append([
+                host,
+                _safe_text(item.get("subdomain"), "-"),
+                _safe_text(item.get("source"), "inventory"),
+            ])
+    return rows or [["No related subdomain links mapped to discovered hosts", "-", "-"]]
+
+
+def _collect_credential_rows(payload: dict) -> list[list[str]]:
+    rows = []
+    for asset in payload.get("assets", []) or []:
+        host = asset.get("domain") or asset.get("hostname") or asset.get("ip") or "Unknown"
+        credential_scan = asset.get("credential_scan") or {}
+        if not credential_scan.get("enabled"):
+            continue
+        findings = credential_scan.get("findings") or []
+        if not findings:
+            rows.append([host, "-", "-", "Credential validation enabled but no supplied SSH credentials succeeded."])
+            continue
+        for item in findings:
+            rows.append([
+                host,
+                str(item.get("port") or 22),
+                _safe_text(item.get("username"), "unknown"),
+                _safe_text(item.get("title") or item.get("description"), "SSH credential finding"),
+            ])
+    return rows or [["Credential validation was not enabled for this scan", "-", "-", "-"]]
+
+
+def _collect_inventory_summary_rows(payload: dict) -> list[list[str]]:
+    inventory = payload.get("asset_inventory") or {}
+    network_map = inventory.get("network_map") or {}
+    services = inventory.get("services") or []
+    return [
+        ["Target", _safe_text(inventory.get("target") or payload.get("input"))],
+        ["Assets", str(inventory.get("asset_count", 0) or 0)],
+        ["IP Addresses", _stringify_report_value(inventory.get("ip_addresses"), default="None")],
+        ["Services", _stringify_report_value([str(item).upper() for item in services], default="None")],
+        ["Subdomains", str(len(inventory.get("subdomains") or []))],
+        ["Map Nodes", str(len(network_map.get("nodes") or []))],
+        ["Map Edges", str(len(network_map.get("edges") or []))],
+    ]
+
+
+def _collect_network_map_rows(payload: dict) -> list[list[str]]:
+    network_map = (payload.get("asset_inventory") or {}).get("network_map") or {}
+    rows = []
+    for edge in network_map.get("edges") or []:
+        if not isinstance(edge, dict):
+            continue
+        rows.append([
+            _safe_text(edge.get("source"), "-"),
+            _safe_text(edge.get("relationship"), "-"),
+            _safe_text(edge.get("target"), "-"),
+        ])
+    return rows or [["No network map relationships recorded", "-", "-"]]
+
+
+def _collect_traffic_protocol_rows(payload: dict) -> list[list[str]]:
+    traffic = payload.get("traffic_analysis") or {}
+    rows = []
+    for item in traffic.get("protocol_usage") or []:
+        if not isinstance(item, dict):
+            continue
+        rows.append([
+            _safe_text(item.get("protocol"), "-"),
+            str(item.get("count") or 0),
+        ])
+    return rows or [["No traffic protocol telemetry recorded", "0"]]
+
+
+def _collect_traffic_event_rows(payload: dict, field_name: str) -> list[list[str]]:
+    traffic = payload.get("traffic_analysis") or {}
+    rows = []
+    for item in traffic.get(field_name) or []:
+        if not isinstance(item, dict):
+            continue
+        rows.append([
+            _safe_text(item.get("src"), "unknown"),
+            _safe_text(item.get("dst"), "unknown"),
+            _safe_text(item.get("port"), "-"),
+            _safe_text(item.get("detail") or item.get("signature") or item.get("message"), "-"),
+        ])
+    return rows
+
+
+def _collect_ticket_rows(payload: dict) -> list[list[str]]:
+    ticket_export = payload.get("ticket_export") or {}
+    rows = []
+    for item in ticket_export.get("tickets") or []:
+        if not isinstance(item, dict):
+            continue
+        rows.append([
+            _safe_text(item.get("title"), "Security finding"),
+            _safe_text(item.get("asset"), "-"),
+            _safe_text(item.get("severity"), "UNKNOWN"),
+            _safe_text(item.get("priority_score"), "0"),
+            _safe_text(item.get("status"), "Open"),
+        ])
+    return rows or [["No ticket export payload generated", "-", "-", "-", "-"]]
+
+
+def _collect_scan_profile_rows(payload: dict) -> list[list[str]]:
+    profile = payload.get("scan_profile") or {}
+    rows = []
+    for key, value in profile.items():
+        rows.append([
+            _format_report_label(key),
+            _bool_text(value) if isinstance(value, bool) else _safe_text(value),
+        ])
+    return rows or [["No scan profile metadata recorded", "-"]]
+
+
+def _collect_web_surface_summary_rows(payload: dict) -> list[list[str]]:
+    web_surface = payload.get("web_surface") or {}
+    return [
+        ["Base URL", _safe_text(web_surface.get("base_url"))],
+        ["Pages Discovered", str(len(web_surface.get("pages") or []))],
+        ["Scripts Found", str(len(web_surface.get("scripts") or []))],
+        ["API Candidates", str(len(web_surface.get("api_candidates") or []))],
+        ["Hidden Routes", str(len(web_surface.get("hidden_routes") or []))],
+        ["Authenticated Context", _bool_text(bool(web_surface.get("auth_context_used")))],
+    ]
+
+
+def _collect_web_surface_rows(payload: dict, field_name: str, label: str) -> list[list[str]]:
+    web_surface = payload.get("web_surface") or {}
+    rows = []
+    for value in web_surface.get(field_name) or []:
+        rows.append([_safe_text(value, "-")])
+    return rows or [[f"No {label} recorded"]]
+
+
+def _collect_api_security_rows(payload: dict) -> list[list[str]]:
+    api_security = payload.get("api_security") or {}
+    rows = []
+    for item in api_security.get("findings") or []:
+        if not isinstance(item, dict):
+            continue
+        rows.append([
+            _safe_text(item.get("severity"), "UNKNOWN"),
+            _safe_text(item.get("title"), "API finding"),
+            _safe_text(item.get("endpoint") or item.get("url"), "-"),
+            _safe_text(item.get("description") or item.get("evidence"), "-"),
+        ])
+    return rows or [["No API security findings recorded", "-", "-", "-"]]
 
 
 def _collect_owasp_results(payload: dict) -> list[dict]:
@@ -925,6 +1202,14 @@ def _generate_pdf_report(payload: dict, output_path: str):
             [Paragraph("2.2 OS Detection", styles["body"])],
             [Paragraph("2.3 Insecure Protocol Detection", styles["body"])],
             [Paragraph("2.4 TLS / Weak Encryption Observations", styles["body"])],
+            [Paragraph("2.5 Service Intelligence", styles["body"])],
+            [Paragraph("2.6 Domain Intelligence", styles["body"])],
+            [Paragraph("2.7 Subdomain Enumeration", styles["body"])],
+            [Paragraph("2.8 SSH Credential Checks", styles["body"])],
+            [Paragraph("2.9 Asset Inventory and Network Map", styles["body"])],
+            [Paragraph("2.10 Traffic Analysis", styles["body"])],
+            [Paragraph("2.11 Ticket Export and Scan Profile", styles["body"])],
+            [Paragraph("2.12 Web Surface and API Security", styles["body"])],
             [Paragraph("<b>3.</b> Discovered Vulnerability Details", styles["toc_item"])],
         ]
         if include_owasp_section:
@@ -944,7 +1229,7 @@ def _generate_pdf_report(payload: dict, output_path: str):
             ])
         else:
             toc_rows.append([Paragraph("<b>4.</b> Conclusion", styles["toc_item"])])
-        toc_content = [
+        story.extend([
             _section_banner("Table of Contents", styles),
             Spacer(1, 24),
             Table(toc_rows, colWidths=[doc.width], style=TableStyle([
@@ -953,16 +1238,8 @@ def _generate_pdf_report(payload: dict, output_path: str):
                 ("TOPPADDING", (0, 0), (-1, -1), 8),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
             ])),
-        ]
-        toc_page = Table([[toc_content]], colWidths=[doc.width], rowHeights=[doc.height - 44])
-        toc_page.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        story.append(toc_page)
+            PageBreak(),
+        ])
 
         story.extend([
             _section_banner("1. Executive Summary", styles),
@@ -1074,18 +1351,20 @@ def _generate_pdf_report(payload: dict, output_path: str):
             Paragraph("1.3 List of Vulnerabilities", styles["section_title"]),
             Spacer(1, 20),
         ])
-        vuln_overview_rows = [["#", "Vulnerability", "Severity", "CVSS Score", "Status"]]
+        vuln_overview_rows = [["#", "Vulnerability", "CVE", "CWE", "Severity", "CVSS Score", "Status"]]
         if vulnerabilities:
             for index, vulnerability in enumerate(vulnerabilities, start=1):
                 vuln_overview_rows.append([
                     str(index),
                     _safe_paragraph(vulnerability["title"], styles["body_small"]),
+                    _safe_paragraph(vulnerability.get("cve") or "N/A", styles["body_small"]),
+                    _safe_paragraph(", ".join(vulnerability.get("cwe_ids") or []) or "N/A", styles["body_small"]),
                     _safe_paragraph(vulnerability["severity"], styles["body_small"]),
                     _safe_paragraph(str(vulnerability["cvss_score"] if vulnerability["cvss_score"] is not None else "N/A"), styles["body_small"]),
                     _safe_paragraph(vulnerability["status"], styles["body_small"]),
                 ])
         else:
-            vuln_overview_rows.append(["1", "No vulnerabilities discovered", "-", "-", "Closed"])
+            vuln_overview_rows.append(["1", "No vulnerabilities discovered", "-", "-", "-", "-", "Closed"])
         severity_breakdown_rows = [
             ["Vulnerability Severity", "No. of Vulnerability found"],
             ["Critical", str(severity_totals.get("CRITICAL", 0))],
@@ -1118,7 +1397,7 @@ def _generate_pdf_report(payload: dict, output_path: str):
             ("LEFTPADDING", (0, 0), (-1, -1), 6),
             ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ]))
-        vuln_overview_table = _styled_table(vuln_overview_rows, [28, 250, 70, 70, 70])
+        vuln_overview_table = _styled_table(vuln_overview_rows, [24, 170, 78, 78, 50, 56, 54])
         if vulnerabilities:
             for row_index, vulnerability in enumerate(vulnerabilities, start=1):
                 sev = str(vulnerability.get("severity", "")).upper()
@@ -1129,8 +1408,8 @@ def _generate_pdf_report(payload: dict, output_path: str):
                     "LOW": colors.HexColor("#43a047"),
                 }.get(sev, colors.HexColor("#111827"))
                 vuln_overview_table.setStyle(TableStyle([
-                    ("TEXTCOLOR", (2, row_index), (2, row_index), sev_color),
-                    ("FONTNAME", (2, row_index), (2, row_index), "Helvetica-Bold"),
+                    ("TEXTCOLOR", (4, row_index), (4, row_index), sev_color),
+                    ("FONTNAME", (4, row_index), (4, row_index), "Helvetica-Bold"),
                 ]))
 
         story.extend([
@@ -1175,6 +1454,161 @@ def _generate_pdf_report(payload: dict, output_path: str):
             tls_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
         story.extend([
             _styled_table(tls_rows, [110, 42, 100, 258]),
+            Spacer(1, 16),
+            Paragraph("2.5 Service Intelligence", styles["section_title"]),
+        ])
+        service_intel_rows = [["Host", "Port", "Service", "Source", "Banner", "NSE Output"]]
+        for row in _collect_service_intel_rows(payload):
+            service_intel_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        story.extend([
+            _styled_table(service_intel_rows, [90, 34, 58, 48, 140, 140]),
+            Spacer(1, 16),
+            Paragraph("2.6 Domain Intelligence", styles["section_title"]),
+        ])
+        domain_intel_rows = [["Field", "Value"]]
+        for row in _collect_domain_intel_rows(payload):
+            domain_intel_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        story.extend([
+            _styled_table(domain_intel_rows, [170, 340]),
+            Spacer(1, 16),
+            Paragraph("2.7 Subdomain Enumeration", styles["section_title"]),
+        ])
+        subdomain_rows = [["Subdomain", "Resolved IP", "Source"]]
+        for row in _collect_subdomain_rows(payload):
+            subdomain_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        related_subdomain_rows = [["Mapped Host", "Subdomain", "Source"]]
+        for row in _collect_related_subdomain_rows(payload):
+            related_subdomain_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        story.extend([
+            _styled_table(subdomain_rows, [240, 150, 120]),
+            Spacer(1, 10),
+            Paragraph("Host-to-Subdomain Links", styles["subsection"]),
+            _styled_table(related_subdomain_rows, [180, 210, 120]),
+            Spacer(1, 16),
+            Paragraph("2.8 SSH Credential Checks", styles["section_title"]),
+        ])
+        credential_rows = [["Host", "Port", "Username", "Result"]]
+        for row in _collect_credential_rows(payload):
+            credential_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        story.extend([
+            _styled_table(credential_rows, [150, 42, 90, 228]),
+            Spacer(1, 16),
+            Paragraph("2.9 Asset Inventory and Network Map", styles["section_title"]),
+        ])
+        inventory_summary_rows = [["Metric", "Value"]]
+        for row in _collect_inventory_summary_rows(payload):
+            inventory_summary_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        network_map_rows = [["Source", "Relationship", "Target"]]
+        for row in _collect_network_map_rows(payload):
+            network_map_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        story.extend([
+            _styled_table(inventory_summary_rows, [180, 330]),
+            Spacer(1, 10),
+            Paragraph("Network Map Relationships", styles["subsection"]),
+            _styled_table(network_map_rows, [180, 100, 230]),
+            Spacer(1, 16),
+            Paragraph("2.10 Traffic Analysis", styles["section_title"]),
+        ])
+        traffic_summary = payload.get("traffic_analysis") or {}
+        traffic_summary_rows = [
+            ["Status", "Duration (s)", "Live Hosts", "Suspicious Events", "Malware Hits"],
+            [
+                _safe_paragraph("Enabled" if traffic_summary.get("enabled") else "Unavailable", styles["body_small"]),
+                _safe_paragraph(str(traffic_summary.get("duration_seconds") or 0), styles["body_small"]),
+                _safe_paragraph(str(len(traffic_summary.get("live_hosts") or [])), styles["body_small"]),
+                _safe_paragraph(str(len(traffic_summary.get("suspicious_traffic") or [])), styles["body_small"]),
+                _safe_paragraph(str(len(traffic_summary.get("malware_patterns") or [])), styles["body_small"]),
+            ],
+        ]
+        traffic_protocol_rows = [["Protocol", "Count"]]
+        for row in _collect_traffic_protocol_rows(payload):
+            traffic_protocol_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        suspicious_rows = [["Source", "Destination", "Port", "Detail"]]
+        for row in _collect_traffic_event_rows(payload, "suspicious_traffic"):
+            suspicious_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        malware_rows = [["Source", "Destination", "Port", "Signature / Detail"]]
+        for row in _collect_traffic_event_rows(payload, "malware_patterns"):
+            malware_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        story.extend([
+            _styled_table(traffic_summary_rows, [90, 90, 90, 120, 120]),
+            Spacer(1, 10),
+            Paragraph("Protocol Usage", styles["subsection"]),
+            _styled_table(traffic_protocol_rows, [220, 100]),
+        ])
+        if len(suspicious_rows) > 1:
+            story.extend([
+                Spacer(1, 10),
+                Paragraph("Suspicious Events", styles["subsection"]),
+                _styled_table(suspicious_rows, [110, 110, 42, 248]),
+            ])
+        if len(malware_rows) > 1:
+            story.extend([
+                Spacer(1, 10),
+                Paragraph("Malware Pattern Indicators", styles["subsection"]),
+                _styled_table(malware_rows, [110, 110, 42, 248]),
+            ])
+        story.extend([
+            Spacer(1, 16),
+            Paragraph("2.11 Ticket Export and Scan Profile", styles["section_title"]),
+        ])
+        ticket_export = payload.get("ticket_export") or {}
+        ticket_rows = [["Title", "Asset", "Severity", "Priority", "Status"]]
+        for row in _collect_ticket_rows(payload):
+            ticket_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        scan_profile_rows = [["Setting", "Value"]]
+        for row in _collect_scan_profile_rows(payload):
+            scan_profile_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        story.extend([
+            _safe_paragraph(f"Generated ticket payloads: {ticket_export.get('count', 0) or 0}", styles["body"]),
+            Spacer(1, 8),
+            _styled_table(ticket_rows, [180, 90, 60, 60, 120]),
+            Spacer(1, 10),
+            Paragraph("Scan Profile", styles["subsection"]),
+            _styled_table(scan_profile_rows, [220, 290]),
+            Spacer(1, 16),
+            Paragraph("2.12 Web Surface and API Security", styles["section_title"]),
+        ])
+        web_surface_rows = [["Metric", "Value"]]
+        for row in _collect_web_surface_summary_rows(payload):
+            web_surface_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        api_security = payload.get("api_security") or {}
+        api_summary_rows = [[
+            _safe_paragraph(str((api_security.get("summary") or {}).get("checked", 0) or 0), styles["body_small"]),
+            _safe_paragraph(str((api_security.get("summary") or {}).get("findings", 0) or 0), styles["body_small"]),
+            _safe_paragraph(str(len(api_security.get("checked_endpoints") or [])), styles["body_small"]),
+        ]]
+        surface_page_rows = [["Discovered Pages"]]
+        for row in _collect_web_surface_rows(payload, "pages", "pages"):
+            surface_page_rows.append([_safe_paragraph(row[0], styles["body_small"])])
+        surface_api_rows = [["API Candidates"]]
+        for row in _collect_web_surface_rows(payload, "api_candidates", "API candidates"):
+            surface_api_rows.append([_safe_paragraph(row[0], styles["body_small"])])
+        hidden_route_rows = [["Hidden Routes"]]
+        for row in _collect_web_surface_rows(payload, "hidden_routes", "hidden routes"):
+            hidden_route_rows.append([_safe_paragraph(row[0], styles["body_small"])])
+        api_rows = [["Severity", "Finding", "Endpoint", "Detail"]]
+        for row in _collect_api_security_rows(payload):
+            api_rows.append([_safe_paragraph(cell, styles["body_small"]) for cell in row])
+        story.extend([
+            _styled_table(web_surface_rows, [180, 330]),
+            Spacer(1, 10),
+            Paragraph("API Security Summary", styles["subsection"]),
+            _styled_table(
+                [["Checked", "Findings", "Checked Endpoints"]] + api_summary_rows,
+                [100, 100, 150],
+            ),
+            Spacer(1, 10),
+            Paragraph("Discovered Pages", styles["subsection"]),
+            _styled_table(surface_page_rows, [doc.width]),
+            Spacer(1, 10),
+            Paragraph("API Candidates", styles["subsection"]),
+            _styled_table(surface_api_rows, [doc.width]),
+            Spacer(1, 10),
+            Paragraph("Hidden Routes", styles["subsection"]),
+            _styled_table(hidden_route_rows, [doc.width]),
+            Spacer(1, 10),
+            Paragraph("API Findings", styles["subsection"]),
+            _styled_table(api_rows, [60, 140, 120, 190]),
             PageBreak(),
         ])
 
@@ -1194,8 +1628,10 @@ def _generate_pdf_report(payload: dict, output_path: str):
                     Paragraph(f"<b>Status</b><br/>{html.escape(vulnerability['status'])}", styles["body"]),
                     Paragraph(f"<b>CVSS Score</b><br/>{html.escape(str(vulnerability['cvss_score'] if vulnerability['cvss_score'] is not None else 'N/A'))}", styles["body"]),
                     Paragraph(f"<b>Confidence</b><br/>{html.escape(str(vulnerability.get('confidence') or 'unknown'))} ({html.escape(str(vulnerability.get('confidence_score') if vulnerability.get('confidence_score') is not None else 'N/A'))})", styles["body"]),
+                    Paragraph(f"<b>CVE</b><br/>{html.escape(str(vulnerability.get('cve') or 'N/A'))}", styles["body"]),
+                    Paragraph(f"<b>CWE</b><br/>{html.escape(', '.join(vulnerability.get('cwe_ids') or ['N/A']))}", styles["body"]),
                 ]]
-                meta_table = Table(detail_meta, colWidths=[120, 120, 120, 120])
+                meta_table = Table(detail_meta, colWidths=[80, 80, 80, 90, 90, 90])
                 meta_table.setStyle(TableStyle([
                     ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
                     ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
@@ -1205,7 +1641,7 @@ def _generate_pdf_report(payload: dict, output_path: str):
                     ("LEFTPADDING", (0, 0), (-1, -1), 10),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 10),
                 ]))
-                story.extend([
+                detail_story = [
                     meta_table,
                     Spacer(1, 12),
                     _safe_paragraph(f"Affected URL / Service: {vulnerability['host']} ({vulnerability['ip']}) - {vulnerability['service']}:{vulnerability['port']}", styles["body"]),
@@ -1215,6 +1651,15 @@ def _generate_pdf_report(payload: dict, output_path: str):
                     Spacer(1, 8),
                     Paragraph("Impact", styles["section_title"]),
                     _safe_paragraph(_impact_text(vulnerability), styles["body"]),
+                ]
+                weakness_summary = str(vulnerability.get("weakness_summary") or "").strip()
+                if weakness_summary:
+                    detail_story.extend([
+                        Spacer(1, 8),
+                        Paragraph("Weakness Summary", styles["section_title"]),
+                        _safe_paragraph(weakness_summary, styles["body"]),
+                    ])
+                detail_story.extend([
                     Spacer(1, 8),
                     Paragraph("Validation & Proof", styles["section_title"]),
                     _safe_paragraph(
@@ -1233,6 +1678,7 @@ def _generate_pdf_report(payload: dict, output_path: str):
                     Spacer(1, 8),
                     Paragraph("Additional References", styles["section_title"]),
                 ])
+                story.extend(detail_story)
                 ref_rows = [["Reference"]]
                 for reference in _additional_references(vulnerability):
                     ref_rows.append([_safe_paragraph(reference, styles["body_small"])])
@@ -1783,6 +2229,57 @@ def validate_target_endpoint(target: str = Query(...)):
     }
 
 
+def _normalize_ssh_credentials(raw_credentials) -> list[tuple[str, str]]:
+    normalized = []
+    for item in raw_credentials or []:
+        if isinstance(item, dict):
+            username = str(item.get("username") or "").strip()
+            password = str(item.get("password") or "").strip()
+            if username and password:
+                normalized.append((username, password))
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            username = str(item[0] or "").strip()
+            password = str(item[1] or "").strip()
+            if username and password:
+                normalized.append((username, password))
+    return normalized
+
+
+def _schedule_minutes_from_payload(payload: dict) -> int:
+    cadence = str(payload.get("cadence") or "").strip().lower()
+    if cadence == "daily":
+        return 1440
+    if cadence == "weekly":
+        return 10080
+    return int(payload.get("interval_minutes") or settings.DEFAULT_SCAN_INTERVAL_MINUTES)
+
+
+def _build_ticket_export(payload: dict) -> dict:
+    tickets = []
+    for asset in payload.get("assets", []) or []:
+        host = asset.get("domain") or asset.get("hostname") or asset.get("ip") or "unknown"
+        for vulnerability in asset.get("vulnerabilities", []) or []:
+            tickets.append({
+                "title": vulnerability.get("title") or "Security finding",
+                "description": vulnerability.get("description") or "",
+                "severity": vulnerability.get("risk_severity") or vulnerability.get("severity") or "UNKNOWN",
+                "priority_score": vulnerability.get("risk_score") or vulnerability.get("cvss_score") or 0,
+                "asset": host,
+                "ip": asset.get("ip"),
+                "service": vulnerability.get("service"),
+                "port": vulnerability.get("port"),
+                "cve": vulnerability.get("cve"),
+                "status": vulnerability.get("status") or "Open",
+                "remediation": vulnerability.get("remediation"),
+                "jira_fields": {
+                    "project": "SEC",
+                    "issuetype": "Bug",
+                    "summary": vulnerability.get("title") or "Security finding",
+                },
+            })
+    return {"count": len(tickets), "tickets": tickets}
+
+
 def _execute_scan(target: str, job_id: str | None = None, options: dict | None = None):
     is_valid, error_msg = validate_target(target)
     if not is_valid:
@@ -1792,33 +2289,64 @@ def _execute_scan(target: str, job_id: str | None = None, options: dict | None =
     auth_context = options.get("auth") or {}
     include_surface_discovery = bool(options.get("include_surface_discovery", True))
     include_api_security = bool(options.get("include_api_security", True))
+    include_subdomain_enum = bool(options.get("include_subdomain_enum", True))
+    include_traffic_sniffing = bool(options.get("include_traffic_sniffing", settings.ENABLE_TRAFFIC_SNIFFING))
+    include_credential_scan = bool(options.get("include_credential_scan", settings.ENABLE_SSH_CREDENTIAL_SCAN))
     api_document = options.get("api_document")
     api_document_format = options.get("api_document_format")
     api_base_url = options.get("api_base_url")
+    ssh_credentials = _normalize_ssh_credentials(options.get("ssh_credentials"))
 
     results = []
     include_domain = is_domain_input(target)
+    subdomains = []
+    domain_intelligence = {}
 
     if job_id:
         _job_update(job_id, status="running", progress=3, stage_index=0, stage_label="Host Discovery")
         _job_log(job_id, f"Starting VAPT scan for target: {target}")
+
+    def wait_or_cancel():
+        if not job_id:
+            return True
+        return _job_wait_if_paused(job_id)
 
     try:
         ip_list = list(set(parse_targets(target)))
     except ValueError as e:
         return {"error": str(e)}
 
-    if job_id and not _job_wait_if_paused(job_id):
+    if include_domain and include_subdomain_enum:
+        subdomains = enumerate_subdomains(target)
+        ip_list = sorted(set(ip_list + [item["resolved_ip"] for item in subdomains if item.get("resolved_ip")]))
+    if include_domain:
+        domain_intelligence = lookup_domain_intelligence(target)
+
+    if not wait_or_cancel():
         return {"error": "Scan cancelled"}
 
     if job_id:
         _job_log(job_id, f"Parsed {len(ip_list)} target(s). Running host discovery.")
     active_hosts = threaded_ping_sweep(ip_list)
 
+    if not wait_or_cancel():
+        return {"error": "Scan cancelled"}
+
     if not active_hosts:
         if job_id:
             _job_log(job_id, "No ICMP replies; falling back to direct target scanning.")
         active_hosts = ip_list
+
+    traffic_summary = {
+        "enabled": False,
+        "duration_seconds": 0,
+        "live_hosts": [],
+        "protocol_usage": [],
+        "suspicious_traffic": [],
+        "malware_patterns": [],
+    }
+    if include_traffic_sniffing:
+        traffic_summary = sniff_network_traffic(active_hosts, duration=settings.TRAFFIC_SNIFF_SECONDS)
 
     if job_id:
         _job_update(job_id, progress=22, stage_index=1, stage_label="Port Scanning (1-65535)")
@@ -1827,18 +2355,19 @@ def _execute_scan(target: str, job_id: str | None = None, options: dict | None =
     total_hosts = max(len(active_hosts), 1)
 
     for idx, ip in enumerate(active_hosts):
-        if job_id and not _job_wait_if_paused(job_id):
+        if not wait_or_cancel():
             return {"error": "Scan cancelled"}
 
         ports = threaded_port_scan(ip)
+        if not wait_or_cancel():
+            return {"error": "Scan cancelled"}
         if job_id:
             _job_update(job_id, progress=min(42, 22 + int(((idx + 1) / total_hosts) * 20)), stage_index=1, stage_label="Port Scanning (1-65535)")
             _job_log(job_id, f"Port scan finished for {ip}: {len(ports)} open port(s) detected.")
 
-        if job_id and not _job_wait_if_paused(job_id):
-            return {"error": "Scan cancelled"}
-
         services = detect_services(ip, ports)
+        if not wait_or_cancel():
+            return {"error": "Scan cancelled"}
         if not services and ports:
             services = [
                 {"port": p, "protocol": "tcp", "service": "unknown", "product": "", "version": ""}
@@ -1864,32 +2393,60 @@ def _execute_scan(target: str, job_id: str | None = None, options: dict | None =
             _job_update(job_id, progress=min(62, 45 + int(((idx + 1) / total_hosts) * 17)), stage_index=2, stage_label="Service Detection")
             _job_log(job_id, f"Service detection finished for {ip}.")
 
-        if job_id and not _job_wait_if_paused(job_id):
+        if not wait_or_cancel():
             return {"error": "Scan cancelled"}
 
         device = classify_device(ip, ports, vendor)
         os_details = detect_os_details(ip, services=services, vendor=vendor, device_type=device, hostname=hostname)
         insecure_protocols = detect_insecure_protocols(services)
+        if not wait_or_cancel():
+            return {"error": "Scan cancelled"}
 
         tls_findings = []
         tls_ports = set([s.get("port") for s in services if s.get("port") in (443, 8443)])
         tls_ports.update([p for p in ports if p in (443, 8443)])
         for tport in sorted(tls_ports):
+            if not wait_or_cancel():
+                return {"error": "Scan cancelled"}
             tls_findings.extend(analyze_tls(ip, tport))
+        if not wait_or_cancel():
+            return {"error": "Scan cancelled"}
 
         vuls = assess_vulnerabilities(services)
+        if not wait_or_cancel():
+            return {"error": "Scan cancelled"}
 
         asset = {
             "ip": ip,
             "hostname": hostname,
             "vendor": vendor,
             "os": os_details["name"],
+            "os_details": os_details,
             "open_ports": services,
             "device_type": device,
             "insecure_protocols": insecure_protocols,
             "tls_issues": tls_findings,
             "vulnerabilities": vuls
         }
+
+        if include_credential_scan:
+            ssh_ports = [
+                int(item.get("port"))
+                for item in services
+                if int(item.get("port") or 0) and "ssh" in str(item.get("service") or "").lower()
+            ]
+            credential_findings = []
+            for ssh_port in ssh_ports:
+                credential_findings.extend(attempt_ssh_login(ip, ssh_port, ssh_credentials or None))
+            if credential_findings:
+                asset["credential_scan"] = {"enabled": True, "findings": credential_findings}
+                asset["vulnerabilities"].extend(credential_findings)
+            else:
+                asset["credential_scan"] = {"enabled": True, "findings": []}
+
+        prioritized = prioritize_asset_vulnerabilities(asset)
+        asset["vulnerabilities"] = prioritized["vulnerabilities"]
+        asset["risk_summary"] = prioritized["summary"]
 
         if include_domain or asset_domain:
             asset["domain"] = asset_domain
@@ -1905,10 +2462,14 @@ def _execute_scan(target: str, job_id: str | None = None, options: dict | None =
     all_vulnerabilities = [v for asset in results for v in asset.get("vulnerabilities", [])]
     critical_risks = [v for v in all_vulnerabilities if v.get("severity") == "CRITICAL"]
     high_risks = [v for v in all_vulnerabilities if v.get("severity") == "HIGH"]
+    if not wait_or_cancel():
+        return {"error": "Scan cancelled"}
     if job_id:
         _job_update(job_id, progress=92, stage_index=4, stage_label="Security Analysis")
         _job_log(job_id, "Running OWASP Top 10 web checks.")
     owasp_top_10 = _run_owasp_scan(target, include_domain, auth_context)
+    if not wait_or_cancel():
+        return {"error": "Scan cancelled"}
     web_surface = run_discover_web_surface(target, auth_context) if include_domain and include_surface_discovery else {
         "base_url": None,
         "pages": [],
@@ -1917,25 +2478,42 @@ def _execute_scan(target: str, job_id: str | None = None, options: dict | None =
         "hidden_routes": [],
         "auth_context_used": bool(auth_context),
     }
+    if not wait_or_cancel():
+        return {"error": "Scan cancelled"}
     api_security = {"checked_endpoints": [], "findings": [], "summary": {"checked": 0, "findings": 0}}
     if include_domain and include_api_security:
         if api_document:
             api_security = run_analyze_api_document(api_document, api_document_format, api_base_url or web_surface.get("base_url"), auth_context)
         else:
             api_security = run_assess_api_endpoints(web_surface.get("api_candidates", []), auth_context)
+    if not wait_or_cancel():
+        return {"error": "Scan cancelled"}
     product_summary = executive_summary({"assets": results})
+    inventory = summarize_inventory(
+        target,
+        results,
+        subdomains=subdomains,
+        domain_intelligence=domain_intelligence,
+    )
+    ticket_export = _build_ticket_export({"assets": results})
     response = {
         "input": target,
         "total_targets": len(ip_list),
         "active_hosts": len(results),
         "assets": results,
+        "asset_inventory": inventory,
+        "traffic_analysis": traffic_summary,
         "owasp_top_10": owasp_top_10,
         "web_surface": web_surface,
         "api_security": api_security,
+        "ticket_export": ticket_export,
         "scan_profile": {
             "authenticated": bool(auth_context),
             "include_surface_discovery": include_surface_discovery,
             "include_api_security": include_api_security,
+            "include_subdomain_enum": include_subdomain_enum,
+            "include_traffic_sniffing": include_traffic_sniffing,
+            "include_credential_scan": include_credential_scan,
             "api_document_supplied": bool(api_document),
         },
         "product_summary": product_summary,
@@ -1947,8 +2525,12 @@ def _execute_scan(target: str, job_id: str | None = None, options: dict | None =
             "needs_validation": product_summary.get("needs_validation", 0),
             "owasp_findings": _owasp_findings_count({"owasp_top_10": owasp_top_10}),
             "api_findings": int((api_security.get("summary") or {}).get("findings", 0) or 0),
+            "suspicious_traffic": len((traffic_summary.get("suspicious_traffic") or [])),
+            "malware_patterns": len((traffic_summary.get("malware_patterns") or [])),
         }
     }
+    if not wait_or_cancel():
+        return {"error": "Scan cancelled"}
     response["report_files"] = save_report(target, response)
     try:
         response["db_scan_id"] = _persist_scan_to_db(response)
@@ -2305,6 +2887,50 @@ def download_report(path: str = Query(...), format: str = Query("json")):
     return FileResponse(out_path, media_type=media_type, filename=out_filename)
 
 
+@router.delete("/reports")
+def delete_report(path: str = Query(...)):
+    report_path = _sanitize_report_path(path)
+    base_path, extension = os.path.splitext(report_path)
+    candidate_paths = {report_path}
+
+    if extension.lower() == ".json":
+        candidate_paths.add(f"{base_path}.txt")
+    elif extension.lower() == ".txt":
+        candidate_paths.add(f"{base_path}.json")
+
+    # Stats history keeps only the latest saved report per target. If we delete just the
+    # newest file, an older report for the same target will become the "latest" and
+    # immediately show back up. When the path matches a scan-history report, remove every
+    # saved report pair for that target.
+    filename = os.path.basename(report_path)
+    if filename.startswith("scan_"):
+        stem = os.path.splitext(filename)[0]
+        parts = stem.replace("scan_", "", 1).rsplit("_", 2)
+        if len(parts) == 3:
+            target_key = parts[0]
+            reports_dir = os.path.dirname(report_path) or "reports"
+            for sibling_name in os.listdir(reports_dir):
+                sibling_stem, sibling_ext = os.path.splitext(sibling_name)
+                if sibling_name.startswith("tmp_") or sibling_ext.lower() not in {".json", ".txt"}:
+                    continue
+                sibling_parts = sibling_stem.replace("scan_", "", 1).rsplit("_", 2)
+                if len(sibling_parts) != 3:
+                    continue
+                if sibling_parts[0] == target_key:
+                    candidate_paths.add(os.path.join(reports_dir, sibling_name))
+
+    deleted_paths = []
+    for candidate in candidate_paths:
+        if os.path.exists(candidate):
+            os.remove(candidate)
+            deleted_paths.append(candidate.replace("\\", "/"))
+
+    if not deleted_paths:
+        raise HTTPException(status_code=404, detail="Report file not found")
+
+    return {"deleted": True, "paths": deleted_paths}
+
+
 @router.post("/surface/discover")
 def discover_surface(payload: dict = Body(...)):
     target = str(payload.get("target") or "").strip()
@@ -2359,7 +2985,7 @@ def create_scan_schedule(payload: dict = Body(...)):
 
     schedule = save_schedule(
         target=target,
-        interval_minutes=int(payload.get("interval_minutes") or 30),
+        interval_minutes=_schedule_minutes_from_payload(payload),
         options=payload.get("options") or {},
     )
     schedule_scan_job(schedule, lambda job_target, options: _execute_scan(job_target, options=options))
@@ -2373,9 +2999,41 @@ def remove_scan_schedule(schedule_id: str):
     return {"deleted": True, "schedule_id": schedule_id}
 
 
+@router.post("/inventory")
+def build_inventory(payload: dict = Body(...)):
+    target = str(payload.get("target") or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="target is required")
+    result = _execute_scan(target, options=payload.get("options") or {})
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {
+        "inventory": result.get("asset_inventory") or {},
+        "ticket_export": result.get("ticket_export") or {"count": 0, "tickets": []},
+    }
+
+
+@router.post("/tickets/export")
+def export_tickets(payload: dict = Body(...)):
+    assets = payload.get("assets")
+    if assets is None and payload.get("target"):
+        result = _execute_scan(str(payload.get("target")).strip(), options=payload.get("options") or {})
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result["error"])
+        return _build_ticket_export(result)
+    if not isinstance(assets, list):
+        raise HTTPException(status_code=400, detail="assets or target is required")
+    return _build_ticket_export({"assets": assets})
+
+
 @router.get("/stats")
 def get_stats():
     """Aggregate statistics from all scan reports."""
+    def percent(count: int, whole: int) -> float:
+        if whole <= 0:
+            return 0
+        return round((count / whole) * 100, 1)
+
     reports_dir = "reports"
     if not os.path.exists(reports_dir):
         return {
@@ -2583,7 +3241,7 @@ def get_stats():
     total_port_hosts = sum(all_ports.values())
     common_ports = []
     for port, count in sorted_ports:
-        pct = int((count / total_port_hosts) * 100) if total_port_hosts > 0 else 0
+        pct = percent(count, total_port_hosts)
         labels = all_port_labels.get(port, {})
         service = max(labels.items(), key=lambda item: item[1])[0] if labels else f"PORT {port}"
         color = ["#059669", "#1d4ed8", "#7c3aed", "#d97706", "#0891b2", "#dc2626", "#6d28d9", "#be185d", "#4338ca", "#0d9488"][len(common_ports) % 10]
@@ -2601,7 +3259,7 @@ def get_stats():
     vuln_breakdown = []
     colors = ["#ef4444", "#f97316", "#eab308", "#84cc16", "#6b7280"]
     for i, (name, count) in enumerate(sorted_vulns):
-        pct = int((count / total_vuln_count) * 100) if total_vuln_count > 0 else 0
+        pct = percent(count, total_vuln_count)
         vuln_breakdown.append({
             "name": name,
             "count": count,
@@ -2615,7 +3273,7 @@ def get_stats():
     os_colors = ['#00e5ff', '#818cf8', '#475569']  # Cyan, Blue, Gray
     os_stats = []
     for i, (name, hosts) in enumerate(sorted_os[:3]):
-        pct = int((hosts / total_os_hosts) * 100) if total_os_hosts > 0 else 0
+        pct = percent(hosts, total_hosts)
         os_stats.append({
             "name": name,
             "pct": pct,
@@ -2625,7 +3283,7 @@ def get_stats():
     # Add Unknown if not present
     if not any(os["name"] == "Unknown" for os in os_stats) and total_os_hosts < total_hosts:
         unknown_hosts = total_hosts - total_os_hosts
-        pct = int((unknown_hosts / total_hosts) * 100) if total_hosts > 0 else 0
+        pct = percent(unknown_hosts, total_hosts)
         os_stats.append({
             "name": "Unknown",
             "pct": pct,

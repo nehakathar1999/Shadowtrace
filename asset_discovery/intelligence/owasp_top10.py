@@ -23,6 +23,8 @@ CATEGORY_DEFINITIONS = [
 
 REQUEST_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; VAPTScanner/1.0)"}
 SCRIPT_SRC_RE = re.compile(r"<script[^>]+src=['\"]([^'\"]+)['\"]", re.IGNORECASE)
+FORM_RE = re.compile(r"<form[^>]+action=['\"]?([^'\">\s]+)?[^>]*>(.*?)</form>", re.IGNORECASE | re.DOTALL)
+INPUT_RE = re.compile(r"<input[^>]+name=['\"]([^'\"]+)['\"][^>]*>", re.IGNORECASE)
 
 
 def _response_snapshot(response: httpx.Response | None) -> dict | None:
@@ -274,6 +276,8 @@ async def _scan_injection(base_url: str, auth_context: dict | None = None) -> li
     ssti_payloads = ["{{7*7}}", "${7*7}"]
     params = ["id", "q", "search", "input", "cmd"]
     async with httpx.AsyncClient(**build_request_config(auth_context)) as client:
+        base_response = await _request(client, "GET", base_url)
+        forms = FORM_RE.findall((base_response.text or "") if base_response else "")
         for param in params:
             for payload in sql_payloads:
                 test_url = f"{base_url}?{param}={payload}"
@@ -291,6 +295,20 @@ async def _scan_injection(base_url: str, auth_context: dict | None = None) -> li
                 ssti_response = await _request(client, "GET", ssti_url)
                 if ssti_response and "49" in ssti_response.text:
                     findings.append(_normalize_finding(category, "Possible template injection", f"Template-like payload submitted through {param} appears to have been evaluated.", ssti_url, evidence=f"Template payload via {param} appeared to evaluate to 49.", request={"method": "GET", "url": ssti_url}, response=ssti_response, payload=payload, confidence_score=86))
+
+        for action, form_html in forms[:4]:
+            input_names = INPUT_RE.findall(form_html or "")
+            if not input_names:
+                continue
+            action_url = urljoin(base_url, action or "")
+            post_body = {name: xss_payload if idx == 0 else "scan-test" for idx, name in enumerate(input_names[:5])}
+            post_response = await _request(client, "POST", action_url, data=post_body)
+            if post_response and xss_payload in post_response.text:
+                findings.append(_normalize_finding(category, "Possible reflected XSS via POST form", "A form POST reflected the supplied script payload without sanitization.", action_url, evidence="POST form submission echoed the XSS payload in the response body.", request={"method": "POST", "url": action_url}, response=post_response, payload=str(post_body), confidence_score=92))
+
+            json_response = await _request(client, "POST", action_url, json={input_names[0]: "' OR 1=1--"})
+            if json_response and any(marker in json_response.text.lower() for marker in ("sql syntax", "mysql", "syntax error", "unterminated query", "odbc", "pdo")):
+                findings.append(_normalize_finding(category, "Possible SQL injection via JSON body", "A JSON request triggered database-style error markers.", action_url, evidence="JSON payload produced SQL-style server error output.", request={"method": "POST", "url": action_url}, response=json_response, payload=f'{{"{input_names[0]}": "\' OR 1=1--"}}', confidence_score=89))
 
     return findings
 
@@ -340,6 +358,11 @@ async def _scan_auth_failures(base_url: str, auth_context: dict | None = None) -
 
         if not login_url:
             return findings
+
+        login_page = await _request(client, "GET", login_url)
+        login_html = (login_page.text or "") if login_page else ""
+        if "<form" in login_html.lower() and "csrf" not in login_html.lower():
+            findings.append(_normalize_finding(category, "Possible missing CSRF protection", "The login workflow exposed an HTML form but no obvious CSRF token markers were observed.", login_url, evidence="No csrf token marker was observed in the login form HTML.", request={"method": "GET", "url": login_url}, response=login_page, confidence_score=76, validation_state="validated_version"))
 
         for username, password in default_creds:
             response = await _request(client, "POST", login_url, data={"username": username, "password": password})

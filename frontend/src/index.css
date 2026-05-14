@@ -1,28 +1,49 @@
 @import "tailwindcss";
 
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-  --navbar-bg: #fff;
-  --navbar-border: #e5e4e7;
-  --navbar-text: #6b6375;
-  --navbar-text-secondary: #9ca3af;
-  --navbar-accent: #aa3bff;
-  --navbar-bg-active: rgba(170, 59, 255, 0.1);
-  --navbar-border-active: rgba(170, 59, 255, 0.5);
+  /* Landing Page Color Palette */
+  --beige:       #f5f0e8;
+  --charcoal:    #1a1a2e;
+  --maroon:      #6b1f3a;
+  --maroon-dim:  rgba(107,31,58,0.18);
+  --gold:        #d4a853;
+  --taupe:       #8a7a6a;
+  --blush:       #e8d5c4;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* Primary Colors */
+  --text:        #1a1a2e;
+  --text-h:      #1a1a2e;
+  --text-dim:    #8a7a6a;
+  --bg:          #f5f0e8;
+  --border:      rgba(26,26,46,0.1);
+  --border-hi:   rgba(107,31,58,0.3);
+  --code-bg:     rgba(26,26,46,0.04);
+  
+  /* Accents */
+  --accent:      #6b1f3a;
+  --accent-bg:   rgba(107,31,58,0.07);
+  --accent-border: rgba(107,31,58,0.3);
+  --social-bg:   rgba(245,240,232,0.6);
+  
+  /* Shadow & Effects */
+  --shadow:      0 24px 60px rgba(26,26,46,0.12), 0 4px 16px rgba(107,31,58,0.08);
+  --radius:      8px;
+  --ease:        cubic-bezier(0.22,1,0.36,1);
+  
+  /* Navbar */
+  --navbar-bg:   rgba(245,240,232,0.82);
+  --navbar-border: rgba(26,26,46,0.1);
+  --navbar-text: #1a1a2e;
+  --navbar-text-secondary: #8a7a6a;
+  --navbar-accent: #6b1f3a;
+  --navbar-bg-active: rgba(107,31,58,0.07);
+  --navbar-border-active: rgba(107,31,58,0.3);
+
+  /* Fonts */
+  --sans:        'DM Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --heading:     'Syne', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --serif:       'Cormorant Garamond', 'Georgia', serif;
+  --mono:        ui-monospace, Consolas, monospace;
 
   font: 16px/145% var(--sans);
   letter-spacing: 0.18px;
@@ -39,39 +60,13 @@
   }
 }
 
-.dark {
-  --text: #9ca3af;
-  --text-h: #f3f4f6;
-  --bg: #16171d;
-  --border: #2e303a;
-  --code-bg: #1f2028;
-  --accent: #c084fc;
-  --accent-bg: rgba(192, 132, 252, 0.15);
-  --accent-border: rgba(192, 132, 252, 0.5);
-  --social-bg: rgba(47, 48, 58, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  --navbar-bg: #020617;
-  --navbar-border: #2e303a;
-  --navbar-text: #f3f4f6;
-  --navbar-text-secondary: #9ca3af;
-  --navbar-accent: #c084fc;
-  --navbar-bg-active: rgba(192, 132, 252, 0.15);
-  --navbar-border-active: rgba(192, 132, 252, 0.5);
-}
-
-.dark #social .button-icon {
-  filter: invert(1) brightness(2);
-}
-
 html, body, #root {
   margin: 0;
   overflow-y: scroll;
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;     /* Firefox */
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
-/* Hide all native scrollbars while keeping scrolling enabled */
 *::-webkit-scrollbar {
   width: 0 !important;
   height: 0 !important;
@@ -94,33 +89,65 @@ html, body, #root {
   box-sizing: border-box;
 }
 
+.honeycomb-bg {
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(30deg, rgba(107,31,58,0.08) 12%, transparent 12%, transparent 38%, rgba(107,31,58,0.08) 38%, rgba(107,31,58,0.08) 62%, transparent 62%, transparent 88%, rgba(107,31,58,0.08) 88%),
+    linear-gradient(150deg, rgba(107,31,58,0.08) 12%, transparent 12%, transparent 38%, rgba(107,31,58,0.08) 38%, rgba(107,31,58,0.08) 62%, transparent 62%, transparent 88%, rgba(107,31,58,0.08) 88%);
+  background-size: 86px 150px;
+  background-position: 0 0, 43px 75px;
+}
+
+.auth-blob-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.scan-blob-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
 h1,
 h2 {
   font-family: var(--heading);
-  font-weight: 500;
+  font-weight: 800;
   color: var(--text-h);
+  letter-spacing: -0.02em;
 }
 
 h1 {
-  font-size: 44px;
-  letter-spacing: -1.68px;
+  font-size: clamp(2.8rem, 5.5vw, 5.2rem);
   margin: 32px 0;
   @media (max-width: 1024px) {
     font-size: 32px;
     margin: 20px 0;
   }
 }
+
 h2 {
-  font-size: 22px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
+  font-size: clamp(2rem, 3.5vw, 3rem);
+  line-height: 115%;
   margin: 0 0 8px;
   @media (max-width: 1024px) {
     font-size: 20px;
   }
 }
+
+h3 {
+  font-family: var(--heading);
+  font-weight: 700;
+  color: var(--text-h);
+  font-size: 16px;
+}
+
 p {
   margin: 0;
+  color: var(--text);
 }
 
 code,
@@ -136,4 +163,33 @@ code {
   line-height: 135%;
   padding: 4px 8px;
   background: var(--code-bg);
+}
+
+.dark {
+  --text:        #f3f4f6;
+  --text-h:      #ffffff;
+  --text-dim:    #b0a8b0;
+  --bg:          #0f0e12;
+  --border:      rgba(255,255,255,0.1);
+  --border-hi:   rgba(212,168,83,0.3);
+  --code-bg:     rgba(255,255,255,0.05);
+  
+  --accent:      #d4a853;
+  --accent-bg:   rgba(212,168,83,0.1);
+  --accent-border: rgba(212,168,83,0.3);
+  --social-bg:   rgba(20,19,24,0.6);
+  
+  --shadow:      0 24px 60px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.25);
+  
+  --navbar-bg:   rgba(20,19,24,0.82);
+  --navbar-border: rgba(255,255,255,0.1);
+  --navbar-text: #ffffff;
+  --navbar-text-secondary: #b0a8b0;
+  --navbar-accent: #d4a853;
+  --navbar-bg-active: rgba(212,168,83,0.1);
+  --navbar-border-active: rgba(212,168,83,0.3);
+}
+
+.dark #social .button-icon {
+  filter: invert(1) brightness(2);
 }

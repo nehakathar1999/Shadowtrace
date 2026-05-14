@@ -1,8 +1,69 @@
-import { useState } from "react";
-import watermarkLogo from "../assets/STLOGO.png";
+import { useState, useEffect, useRef } from "react";
+import { API_BASE } from "../lib/api";
 
-const DEFAULT_API_HOST = `${window.location.protocol}//${window.location.hostname}:8000`;
-const API_BASE = (import.meta.env.VITE_API_URL || DEFAULT_API_HOST).replace(/\/+$/, "");
+function BlobBg() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas.getContext("2d");
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+    const resize = () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; };
+    window.addEventListener("resize", resize);
+
+    const blobs = [
+      { x: W * 0.15, y: H * 0.3, r: 380, color: "#1a1a2e", vx: 0.08, vy: 0.06 },
+      { x: W * 0.80, y: H * 0.65, r: 320, color: "#6b1f3a", vx: -0.07, vy: 0.09 },
+      { x: W * 0.50, y: H * 0.10, r: 220, color: "#e8d5c4", vx: 0.06, vy: -0.05 },
+      { x: W * 0.90, y: H * 0.10, r: 200, color: "#6b1f3a", vx: -0.05, vy: 0.08 },
+    ];
+
+    let raf;
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#f5f0e8";
+      ctx.fillRect(0, 0, W, H);
+      blobs.forEach((b) => {
+        b.x += b.vx; b.y += b.vy;
+        if (b.x < -b.r) b.x = W + b.r;
+        if (b.x > W + b.r) b.x = -b.r;
+        if (b.y < -b.r) b.y = H + b.r;
+        if (b.y > H + b.r) b.y = -b.r;
+        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+        g.addColorStop(0, b.color + "40");
+        g.addColorStop(1, b.color + "00");
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.strokeStyle = "rgba(26,26,46,0.04)";
+      ctx.lineWidth = 0.7;
+      const size = 42;
+      const rows = Math.ceil(H / (size * 1.73)) + 2;
+      const cols = Math.ceil(W / (size * 2)) + 2;
+      for (let r = -1; r < rows; r += 1) {
+        for (let c = -1; c < cols; c += 1) {
+          const cx = c * size * 2 + (r % 2) * size + size;
+          const cy = r * size * 1.73 + size;
+          ctx.beginPath();
+          for (let a = 0; a < 6; a += 1) {
+            const angle = (Math.PI / 3) * a - Math.PI / 6;
+            const px = cx + size * 0.88 * Math.cos(angle);
+            const py = cy + size * 0.88 * Math.sin(angle);
+            if (a === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.stroke();
+        }
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+  }, []);
+
+  return <canvas ref={ref} className="auth-blob-canvas" />;
+}
 
 const EyeIcon = ({ open }) => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -26,7 +87,7 @@ function Field({ label, children, right }) {
   return (
     <label className="block">
       <div className="mb-1.5 flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-slate-700">{label}</span>
+        <span style={{ fontSize: '13px', fontWeight: '500', color: 'var(--text)', fontFamily: 'var(--heading)' }}>{label}</span>
         {right}
       </div>
       {children}
@@ -41,16 +102,83 @@ function PasswordInput({ value, onChange, placeholder, visible, onToggle, classN
         type={visible ? "text" : "password"}
         value={value}
         onChange={onChange}
-        className={className}
+        style={{
+          width: '100%',
+          borderRadius: '8px',
+          border: '1.5px solid var(--border)',
+          background: 'rgba(245,240,232,0.8)',
+          padding: '13px 18px',
+          fontSize: '14px',
+          color: 'var(--text)',
+          outline: 'none',
+          transition: 'border-color 0.2s',
+          fontFamily: 'var(--sans)',
+        }}
         placeholder={placeholder}
       />
       <button
         type="button"
         onClick={onToggle}
-        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-slate-800"
+        aria-label={visible ? "Hide password" : "Show password"}
+        style={{
+          position: 'absolute',
+          right: '8px',
+          top: '50%',
+          transform: 'translateY(-50%)',
+          borderRadius: '6px',
+          padding: '6px',
+          color: 'var(--text-dim)',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          transition: 'color 0.2s',
+        }}
       >
         <EyeIcon open={visible} />
       </button>
+    </div>
+  );
+}
+
+function getPasswordRequirementState(password) {
+  const value = String(password || "");
+  return {
+    hasUppercase: /[A-Z]/.test(value),
+    hasNumber: /\d/.test(value),
+    hasSymbol: /[^A-Za-z0-9]/.test(value),
+  };
+}
+
+function isStrongPassword(password) {
+  const requirements = getPasswordRequirementState(password);
+  return requirements.hasUppercase && requirements.hasNumber && requirements.hasSymbol;
+}
+
+function PasswordRequirements({ password }) {
+  const requirements = getPasswordRequirementState(password);
+  const items = [
+    { label: "At least one capital letter", met: requirements.hasUppercase },
+    { label: "At least one number", met: requirements.hasNumber },
+    { label: "At least one symbol", met: requirements.hasSymbol },
+  ];
+
+  return (
+    <div style={{
+      borderRadius: '16px',
+      border: '1px solid var(--border-hi)',
+      background: 'rgba(245,240,232,0.92)',
+      padding: '16px',
+      fontSize: '14px',
+      color: 'var(--text)',
+    }}>
+      <div style={{ fontWeight: '700', marginBottom: '8px', color: 'var(--text)' }}>Password must include:</div>
+      <div style={{ marginTop: '8px', display: 'grid', gap: '8px' }}>
+        {items.map((item) => (
+          <div key={item.label} style={{ color: item.met ? 'var(--accent)' : 'var(--text-dim)' }}>
+            {item.met ? '✓' : '•'} {item.label}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -73,9 +201,13 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
 
   const isSignup = mode === "signup";
   const isCompactMode = mode === "login" || mode === "signup";
-  const inputClassName = `w-full rounded-[18px] border border-white/55 bg-white/88 px-4 ${
-    isSignup ? "py-2" : isCompactMode ? "py-2.5" : "py-3"
-  } text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-4 focus:ring-white/30`;
+  const isLogin = mode === "login";
+  const shouldShowPasswordRequirements =
+    (mode === "signup" && form.password.length > 0 && !isStrongPassword(form.password)) ||
+    (mode === "forgot" && form.newPassword.length > 0 && !isStrongPassword(form.newPassword));
+  const authCardClassName = "relative w-full max-w-[420px] rounded-[30px] border backdrop-blur-xl mx-auto px-8 py-8";
+  const inputClassName =
+    "w-full rounded-[14px] border border-[rgba(107,31,58,0.18)] bg-[#fff9f2] px-4 py-3 text-base text-[var(--text)] outline-none shadow-[inset_0_1px_1px_rgba(26,26,46,0.06)] transition placeholder:text-[rgba(26,26,46,0.35)] focus:border-[rgba(107,31,58,0.7)] focus:ring-1 focus:ring-[rgba(212,168,83,0.18)]";
 
   const updateField = (key, value) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -101,6 +233,10 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
         setError("New password must be at least 6 characters.");
         return;
       }
+      if (!isStrongPassword(form.newPassword)) {
+        setError("Password must contain at least one capital letter, one number, and one symbol.");
+        return;
+      }
     } else {
       if (!form.email.trim() || !form.password.trim()) {
         setError("Email and password are required.");
@@ -112,6 +248,10 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
       }
       if (mode === "signup" && form.password !== form.confirmPassword) {
         setError("Passwords do not match.");
+        return;
+      }
+      if (mode === "signup" && !isStrongPassword(form.password)) {
+        setError("Password must contain at least one capital letter, one number, and one symbol.");
         return;
       }
     }
@@ -175,45 +315,72 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[linear-gradient(135deg,#eef3ff_0%,#dfe8ff_34%,#cfdcff_70%,#bfd0ff_100%)] px-5 py-6 text-slate-900 sm:px-8">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-24 top-12 h-56 w-56 rounded-full bg-white/30 blur-3xl" />
-        <div className="absolute right-8 top-0 h-72 w-72 rounded-full bg-indigo-300/25 blur-3xl" />
-        <div className="absolute bottom-6 right-16 h-56 w-56 rounded-full bg-blue-300/20 blur-3xl" />
-        <div className="absolute inset-0 flex items-center justify-center opacity-[0.12]">
-          <img src={watermarkLogo} alt="" className="w-[920px] max-w-[90vw]" />
-        </div>
-      </div>
-
-      <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] max-w-[1280px] items-center justify-center">
+    <div className="relative min-h-screen overflow-hidden px-5 py-6 sm:px-8" style={{ background: 'linear-gradient(180deg, #f9f2e6 0%, #f5f0e8 60%, #fff9f0 100%)', color: 'var(--text)' }}>
+      <style>{`
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus,
+        textarea:-webkit-autofill,
+        textarea:-webkit-autofill:hover,
+        textarea:-webkit-autofill:focus {
+          box-shadow: 0 0 0px 1000px rgba(245,240,232,0.95) inset !important;
+          -webkit-text-fill-color: #1a1a2e !important;
+          transition: background-color 5000s ease-in-out 0s;
+        }
+      `}</style>
+      <BlobBg />
+      <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-[720px] items-center justify-center">
         <div
-          className={`w-full rounded-[30px] border border-white/35 shadow-[0_24px_80px_rgba(37,99,235,0.18)] backdrop-blur-xl ${
-            mode === "login" ? "bg-white/18" : "bg-white/28"
-          } ${isCompactMode ? "max-w-[430px] px-6 py-5 sm:px-8" : "max-w-[480px] px-7 py-7 sm:px-9"
-          }`}
+          className={authCardClassName}
+          style={{
+            background: 'linear-gradient(180deg, rgba(255,250,246,0.98), rgba(245,240,232,0.96))',
+            border: '1px solid rgba(107,31,58,0.18)',
+            boxShadow: '0 32px 90px rgba(107,31,58,0.12)',
+          }}
         >
-          {/* Back button is temporarily hidden while landing page is disabled. */}
-          {/* <button
+          <button
             onClick={onBack}
-            className={`inline-flex items-center gap-2 rounded-full border border-white/50 bg-white/35 text-sm font-medium text-slate-700 transition hover:bg-white/50 ${
-              isCompactMode ? "px-4 py-2" : "px-5 py-2.5"
-            }`}
+            className="absolute inline-flex items-center gap-2 rounded-full transition"
+            style={{
+              position: 'absolute',
+              top: '16px',
+              left: '16px',
+              border: '1.5px solid var(--border-hi)',
+              background: 'rgba(26,26,46,0.06)',
+              color: 'var(--text)',
+              fontSize: '12px',
+              fontWeight: '600',
+              padding: '8px 14px',
+              cursor: 'pointer',
+              fontFamily: 'var(--heading)',
+              backdropFilter: 'blur(8px)',
+            }}
             aria-label="Back"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
               <path d="m15 18-6-6 6-6" />
             </svg>
-          </button> */}
+            Back
+          </button>
 
           <div className={`text-center ${isCompactMode ? "mt-0" : "mt-6"}`}>
             <h1
-              className={`font-semibold tracking-[-0.05em] text-slate-800 ${
-                isSignup ? "text-[2.45rem] leading-none" : isCompactMode ? "text-[2.8rem] leading-none" : "text-4xl"
-              }`}
+              style={{
+                fontFamily: 'var(--heading)',
+                fontWeight: '800',
+                color: 'var(--text)',
+                letterSpacing: '-0.02em',
+                fontSize: isLogin ? '3rem' : '2.65rem',
+                lineHeight: '1',
+              }}
             >
-              {mode === "login" ? "Welcome Back" : mode === "signup" ? "Create Account" : "Reset Password"}
+              {mode === "login" ? "Login" : mode === "signup" ? "Sign Up" : "Forgot Password"}
             </h1>
-            <p className={`text-slate-600 ${isSignup ? "mt-1.5 text-[14px]" : isCompactMode ? "mt-2 text-[15px]" : "mt-3 text-base"}`}>
+            <p style={{
+              marginTop: '0.5rem',
+              fontSize: '15px',
+              color: 'var(--text-dim)',
+            }}>
               {mode === "login"
                 ? "Sign in to continue to your account"
                 : mode === "signup"
@@ -222,7 +389,7 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
             </p>
           </div>
 
-          <form onSubmit={submit} className={`space-y-3 ${isSignup ? "mt-4" : isCompactMode ? "mt-5" : "mt-8"}`}>
+          <form onSubmit={submit} className="mt-6 space-y-3.5">
             {mode === "signup" && (
               <Field label="Full Name">
                 <input
@@ -240,7 +407,8 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
                 value={form.email}
                 onChange={(e) => updateField("email", e.target.value)}
                 className={inputClassName}
-                placeholder="name@company.com"
+                style={{ background: 'rgba(245,240,232,0.95)' }}
+                placeholder={isLogin ? "Enter your email address" : "name@company.com"}
               />
             </Field>
 
@@ -252,7 +420,15 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
                     <button
                       type="button"
                       onClick={() => switchMode("forgot")}
-                      className="text-xs text-indigo-700 underline-offset-4 hover:underline"
+                      style={{
+                        fontSize: '12px',
+                        color: 'var(--accent)',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                        fontFamily: 'var(--sans)',
+                      }}
                     >
                       Forgot Password?
                     </button>
@@ -262,7 +438,7 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
                 <PasswordInput
                   value={form.password}
                   onChange={(e) => updateField("password", e.target.value)}
-                  placeholder={mode === "login" ? "Enter password" : "Create password"}
+                  placeholder={mode === "login" ? "Type your password" : "Create password"}
                   visible={showPassword}
                   onToggle={() => setShowPassword((current) => !current)}
                   className={inputClassName}
@@ -296,8 +472,19 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
               </Field>
             )}
 
+            {shouldShowPasswordRequirements && (
+              <PasswordRequirements password={mode === "forgot" ? form.newPassword : form.password} />
+            )}
+
             {error && (
-              <div className="rounded-[18px] border border-rose-200/80 bg-rose-50/85 px-4 py-3 text-sm text-rose-700">
+              <div style={{
+                borderRadius: '14px',
+                border: '1px solid rgba(211,67,67,0.3)',
+                background: 'rgba(211,67,67,0.08)',
+                padding: '12px 16px',
+                fontSize: '13px',
+                color: 'var(--accent)',
+              }}>
                 {error}
               </div>
             )}
@@ -311,28 +498,27 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
             <button
               type="submit"
               disabled={isSubmitting}
-              className={`w-full rounded-[18px] bg-[linear-gradient(135deg,#5b6ee1,#8047ae)] px-6 ${
-                isSignup ? "py-2.25" : isCompactMode ? "py-2.5" : "py-3.5"
-              } text-lg font-semibold text-white shadow-[0_18px_38px_rgba(91,110,225,0.28)] transition hover:-translate-y-0.5`}
+              className="w-full rounded-full bg-[linear-gradient(90deg,#6b1f3a,#d4a853,#8a7a6a)] px-6 py-3 text-lg font-semibold text-white shadow-[0_18px_38px_rgba(107,31,58,0.18)] transition hover:-translate-y-0.5"
             >
               {isSubmitting
                 ? "Please wait..."
                 : mode === "login"
-                  ? "Sign In"
+                  ? "LOGIN"
                   : mode === "signup"
-                    ? "Create Account"
-                    : "Update Password"}
+                    ? "SIGN UP"
+                    : "UPDATE PASSWORD"}
             </button>
           </form>
 
-          <div className={`text-center text-sm text-slate-700 ${isSignup ? "mt-3" : isCompactMode ? "mt-4" : "mt-6"}`}>
+          <div className="mt-4 text-center text-sm text-slate-700">
             {mode === "login" && (
               <>
                 Don&apos;t have an account?{" "}
                 <button
                   type="button"
                   onClick={() => switchMode("signup")}
-                  className="cursor-pointer font-medium text-indigo-700 underline-offset-4 hover:underline"
+                  className="cursor-pointer font-medium underline-offset-4 hover:underline"
+                  style={{ color: 'var(--accent)' }}
                 >
                   Sign up
                 </button>
@@ -344,7 +530,8 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
                 <button
                   type="button"
                   onClick={() => switchMode("login")}
-                  className="cursor-pointer font-medium text-indigo-700 underline-offset-4 hover:underline"
+                  className="cursor-pointer font-medium underline-offset-4 hover:underline"
+                  style={{ color: 'var(--accent)' }}
                 >
                   Login
                 </button>
@@ -356,7 +543,8 @@ export default function AuthPage({ onBack, onAuthSuccess }) {
                 <button
                   type="button"
                   onClick={() => switchMode("login")}
-                  className="cursor-pointer font-medium text-indigo-700 underline-offset-4 hover:underline"
+                  className="cursor-pointer font-medium underline-offset-4 hover:underline"
+                  style={{ color: 'var(--accent)' }}
                 >
                   Back to login
                 </button>

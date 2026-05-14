@@ -14,3 +14,4 @@ loguru==0.7.2
 asyncpg==0.29.0
 reportlab==4.0.0
 python-docx==0.8.12
+paramiko==3.5.0

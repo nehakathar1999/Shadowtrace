@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-
-const DEFAULT_API_HOST = `${window.location.protocol}//${window.location.hostname}:8000`;
-const API_BASE = (import.meta.env.VITE_API_URL || DEFAULT_API_HOST).replace(/\/+$/, "");
+import { API_BASE } from "../lib/api";
 const SCAN_REQUEST_TIMEOUT_MS = 120000;
 const EXAMPLES = [
   "192.168.1.1",
@@ -53,6 +51,70 @@ function getApiErrorMessage(data, status) {
   if (data?.error) return data.error;
   if (data?.detail) return data.detail;
   return `HTTP ${status}`;
+}
+
+function BlobBg() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas.getContext("2d");
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+    const resize = () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; };
+    window.addEventListener("resize", resize);
+
+    const blobs = [
+      { x: W * 0.15, y: H * 0.3, r: 380, color: "#1a1a2e", vx: 0.08, vy: 0.06 },
+      { x: W * 0.80, y: H * 0.65, r: 320, color: "#6b1f3a", vx: -0.07, vy: 0.09 },
+      { x: W * 0.50, y: H * 0.10, r: 220, color: "#e8d5c4", vx: 0.06, vy: -0.05 },
+      { x: W * 0.90, y: H * 0.10, r: 200, color: "#6b1f3a", vx: -0.05, vy: 0.08 },
+    ];
+
+    let raf;
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#f5f0e8";
+      ctx.fillRect(0, 0, W, H);
+      blobs.forEach((b) => {
+        b.x += b.vx; b.y += b.vy;
+        if (b.x < -b.r) b.x = W + b.r;
+        if (b.x > W + b.r) b.x = -b.r;
+        if (b.y < -b.r) b.y = H + b.r;
+        if (b.y > H + b.r) b.y = -b.r;
+        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+        g.addColorStop(0, b.color + "40");
+        g.addColorStop(1, b.color + "00");
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.strokeStyle = "rgba(26,26,46,0.04)";
+      ctx.lineWidth = 0.7;
+      const size = 42;
+      const rows = Math.ceil(H / (size * 1.73)) + 2;
+      const cols = Math.ceil(W / (size * 2)) + 2;
+      for (let r = -1; r < rows; r += 1) {
+        for (let c = -1; c < cols; c += 1) {
+          const cx = c * size * 2 + (r % 2) * size + size;
+          const cy = r * size * 1.73 + size;
+          ctx.beginPath();
+          for (let a = 0; a < 6; a += 1) {
+            const angle = (Math.PI / 3) * a - Math.PI / 6;
+            const px = cx + size * 0.88 * Math.cos(angle);
+            const py = cy + size * 0.88 * Math.sin(angle);
+            if (a === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.stroke();
+        }
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+  }, []);
+
+  return <canvas ref={ref} className="scan-blob-canvas" />;
 }
 
 
@@ -157,20 +219,6 @@ const LogoSvg = () => (
     <line x1="2" y1="20" x2="38" y2="20" stroke="#3b82f6" strokeWidth="2" />
   </svg>
 );
-const BigLogoSvg = ({ theme }) => {
-  const globeStroke = theme === "dark" ? "#2563eb" : "#3b82f6";
-
-  return (
-  <svg width="76" height="76" viewBox="0 0 80 80" fill="none">
-    <circle cx="40" cy="40" r="34" stroke="#7c3aed" strokeWidth="2.5" />
-    <circle cx="40" cy="40" r="26" stroke={globeStroke} strokeWidth="2" />
-    <ellipse cx="40" cy="40" rx="12" ry="34" stroke={globeStroke} strokeWidth="2" />
-    <line x1="6" y1="40" x2="74" y2="40" stroke={globeStroke} strokeWidth="2" />
-    <line x1="12" y1="24" x2="68" y2="24" stroke={globeStroke} strokeWidth="1.5" strokeDasharray="3 2" />
-    <line x1="12" y1="56" x2="68" y2="56" stroke={globeStroke} strokeWidth="1.5" strokeDasharray="3 2" />
-  </svg>
-  );
-};
 function StageIcon({ type, size = 19 }) {
   if (type === "check") return <CheckSvg size={size} />;
   if (type === "wifi") return <WifiSvg size={size} />;
@@ -187,50 +235,39 @@ function HomePage({ onScan, theme, previewMode = false, onRequireLogin }) {
   const [showExamples, setShowExamples] = useState(false);
   const [error, setError] = useState("");
 
-  // Validation function for target input
   const isValidTarget = (target) => {
     if (!target || target.trim().length === 0) return false;
-
-    const parts = target.split(",").map(p => p.trim());
+    const parts = target.split(",").map((p) => p.trim());
 
     for (const part of parts) {
-      // Check for IP address pattern (e.g., 192.168.1.1)
       const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
       if (ipPattern.test(part)) {
         const octets = part.split(".").map(Number);
-        if (octets.every(o => o >= 0 && o <= 255)) continue;
+        if (octets.every((o) => o >= 0 && o <= 255)) continue;
       }
 
-      // Check for CIDR notation (e.g., 10.0.0.0/24)
       const cidrPattern = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
       if (cidrPattern.test(part)) {
         const [ip, mask] = part.split("/");
         const octets = ip.split(".").map(Number);
         const maskNum = Number(mask);
-        if (octets.every(o => o >= 0 && o <= 255) && maskNum >= 0 && maskNum <= 32) continue;
+        if (octets.every((o) => o >= 0 && o <= 255) && maskNum >= 0 && maskNum <= 32) continue;
       }
 
-      // Check for IP range (e.g., 192.168.1.1-192.168.1.10)
       const rangePattern = /^(\d{1,3}\.){3}\d{1,3}-(\d{1,3}\.){3}\d{1,3}$/;
       if (rangePattern.test(part)) {
         const [start, end] = part.split("-");
         const startOctets = start.split(".").map(Number);
         const endOctets = end.split(".").map(Number);
-        if (
-          startOctets.every(o => o >= 0 && o <= 255) &&
-          endOctets.every(o => o >= 0 && o <= 255)
-        ) continue;
+        if (startOctets.every((o) => o >= 0 && o <= 255) && endOctets.every((o) => o >= 0 && o <= 255)) continue;
       }
 
-      // Check for domain pattern (e.g., example.com, subdomain.example.com)
       const domainPattern = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
       if (domainPattern.test(part)) continue;
 
-      // Allow single-label hostnames (local network hosts like 'm')
       const localHostPattern = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;
       if (localHostPattern.test(part)) continue;
 
-      // If none match, it's invalid
       return false;
     }
 
@@ -253,68 +290,139 @@ function HomePage({ onScan, theme, previewMode = false, onRequireLogin }) {
   };
 
   return (
-    <>
-      <main className="h-[calc(100vh-88px)] h-[calc(100dvh-88px)] flex items-start justify-center px-6 pt-7 sm:pt-8 overflow-hidden">
+    <main
+      className="relative z-10 h-[calc(100vh-88px)] h-[calc(100dvh-88px)] flex items-start justify-center px-6 pt-7 sm:pt-8 overflow-hidden"
+      style={{
+        backgroundColor: 'transparent',
+      }}
+    >
+      <style>{`
+        @keyframes scanSpin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes scanPulse {
+          0%, 100% { transform: scale(0.92); opacity: 0.45; }
+          50% { transform: scale(1); opacity: 0.95; }
+        }
+      `}</style>
       <div className="flex flex-col items-center w-full max-w-6xl">
         <div
-          className="mb-4 flex items-center justify-center rounded-full border border-violet-500/25 bg-violet-500/5 p-3"
+          className="mb-5 flex items-center justify-center rounded-full p-5"
           style={{
-            boxShadow: theme === 'dark'
-              ? "0 0 0 1px rgba(124,58,237,0.16), 0 0 32px rgba(124,58,237,0.12)"
-              : "0 0 0 1px rgba(124,58,237,0.12), 0 0 32px rgba(59,130,246,0.10)"
+            position: "relative",
+            width: "96px",
+            height: "96px",
+            border: "1.5px solid rgba(107,31,58,0.20)",
+            background: "radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(245,240,232,0.72))",
+            boxShadow: "0 18px 42px rgba(107,31,58,0.12)",
+            backdropFilter: "blur(12px)",
           }}
         >
-          <div
+          <span
             style={{
-              filter: theme === 'dark'
-                ? "drop-shadow(0 0 16px rgba(124,58,237,0.18))"
-                : "drop-shadow(0 0 16px rgba(59,130,246,0.20))",
-              transform: "scale(0.96)"
+              position: "absolute",
+              inset: "10px",
+              borderRadius: "999px",
+              border: "1px solid rgba(107,31,58,0.16)",
+              animation: "scanPulse 2.2s ease-in-out infinite",
             }}
-          >
-            <BigLogoSvg theme={theme} />
-          </div>
+          />
+          <span
+            style={{
+              position: "absolute",
+              inset: "4px",
+              borderRadius: "999px",
+              borderTop: "2px solid rgba(107,31,58,0.85)",
+              borderRight: "2px solid transparent",
+              borderBottom: "2px solid rgba(107,31,58,0.18)",
+              borderLeft: "2px solid transparent",
+              animation: "scanSpin 3.4s linear infinite",
+            }}
+          />
+          <span style={{ color: "#6b1f3a", position: "relative", zIndex: 1 }}>
+            <GlobeIcon size={42} />
+          </span>
         </div>
 
         <h1
-          className={`text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight text-center m-0 bg-gradient-to-r ${theme === 'dark' ? 'from-cyan-300 via-cyan-400 to-sky-400' : 'from-indigo-400 via-blue-400 to-blue-300'} bg-clip-text text-transparent`}
-          style={{ margin: 0, lineHeight: 1.05 }}
+          className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight text-center m-0"
+          style={{ margin: 0, lineHeight: 1.05, color: 'rgba(26,26,46,0.96)' }}
         >
-          VAPT SCANNER PRO
+          VULN SCAN
         </h1>
         <p
-          className="text-sm sm:text-lg text-slate-400 text-center max-w-3xl"
-          style={{ marginTop: 10, marginBottom: 22 }}
+          className="text-sm sm:text-lg text-center max-w-3xl"
+          style={{ marginTop: 10, marginBottom: 22, color: 'var(--text-dim)' }}
         >
           Vulnerability Assessment &amp; Penetration Testing Platform
         </p>
 
         <div className="flex flex-col items-center gap-3 w-full">
-          <div className="relative w-full max-w-[980px]">
+          <div
+            className="relative w-full max-w-[980px]"
+            style={{
+              borderRadius: '34px',
+              border: 'none',
+              background: 'transparent',
+              boxShadow: 'none',
+              padding: '12px',
+            }}
+          >
             <input
-              className={`w-full py-5 pl-7 pr-16 rounded-2xl border ${theme === 'dark' ? 'bg-[#0b1020]/92 text-slate-100 placeholder-slate-500 caret-cyan-400 shadow-[0_0_0_1px_rgba(34,211,238,0.12)]' : 'bg-white text-gray-900 placeholder-gray-500 caret-blue-400 shadow-[0_0_0_1px_rgba(59,130,246,0.12)]'} text-xl outline-none transition-colors ${
-                error ? "border-red-500/60 focus:border-red-500" : theme === 'dark' ? "border-cyan-400/60 focus:border-cyan-400" : "border-blue-400/60 focus:border-blue-400"
-              }`}
-              type="text" placeholder="192.168.1.1 or 10.0.0.0/24 or example.com"
-              value={query} onChange={(e) => { setQuery(e.target.value); setError(""); }}
+              type="text"
+              placeholder="192.168.1.1 or 10.0.0.0/24 or example.com"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setError(""); }}
               onKeyDown={(e) => e.key === "Enter" && go()}
+              className="w-full text-xl outline-none transition-colors"
+              style={{
+                width: '100%',
+                padding: '16px 54px 16px 24px',
+                borderRadius: '24px',
+                border: '1px solid transparent',
+                background: '#ffffff',
+                color: 'var(--text)',
+                boxShadow: 'inset 0 1px 2px rgba(26,26,46,0.06)',
+              }}
             />
-            <span className={`absolute right-6 top-1/2 -translate-y-1/2 flex scale-110 ${theme === 'dark' ? 'text-cyan-400' : 'text-blue-500'}`}><ScanSvg /></span>
+            <span className="absolute right-6 top-1/2 -translate-y-1/2 flex scale-110" style={{ color: '#6b1f3a' }}>
+              <ScanSvg />
+            </span>
           </div>
 
           {error && (
-            <div className="w-full px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/40 text-red-400 text-sm">
+            <div
+              className="w-full px-4 py-3 rounded-lg text-sm"
+              style={{
+                border: '1px solid rgba(191,90,75,0.35)',
+                background: 'rgba(191,90,75,0.08)',
+                color: 'rgba(107,31,58,0.95)',
+              }}
+            >
               {error}
             </div>
           )}
 
           {previewMode && (
-            <div className={`w-full rounded-2xl border px-5 py-4 text-sm ${theme === 'dark' ? 'border-violet-400/30 bg-violet-400/8 text-violet-200' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>
+            <div
+              className="w-full rounded-2xl px-5 py-4 text-sm"
+              style={{
+                background: 'rgba(212,168,83,0.12)',
+                border: '1px solid rgba(212,168,83,0.18)',
+                color: 'var(--text)',
+              }}
+            >
               Preview mode is active. You can explore the scanner UI here, but real scans only run after login or signup.
               {onRequireLogin && (
                 <button
                   onClick={onRequireLogin}
-                  className={`ml-3 rounded-xl px-4 py-2 text-sm font-semibold transition ${theme === 'dark' ? 'bg-violet-500/20 text-violet-200 hover:bg-violet-500/30' : 'bg-white text-sky-700 hover:bg-sky-100'}`}
+                  className="ml-3 rounded-xl px-4 py-2 text-sm font-semibold transition"
+                  style={{
+                    background: 'var(--accent)',
+                    color: 'var(--bg)',
+                    border: '1px solid rgba(212,168,83,0.2)',
+                  }}
                 >
                   Login to enable scanning
                 </button>
@@ -323,26 +431,53 @@ function HomePage({ onScan, theme, previewMode = false, onRequireLogin }) {
           )}
 
           <div className="flex gap-4 flex-wrap justify-center">
-            <button onClick={go}
-              className="min-w-40 px-8 py-3 rounded-2xl text-[#0a0d14] text-lg font-semibold cursor-pointer hover:opacity-90 transition-opacity border-none"
-              style={{ background: theme === 'dark' ? "linear-gradient(135deg,#67e8f9,#06b6d4)" : "linear-gradient(135deg,#60a5fa,#2563eb)" }}>
+            <button
+              onClick={go}
+              className="min-w-40 px-8 py-3 rounded-2xl text-lg font-semibold cursor-pointer hover:opacity-90 transition-opacity border-none"
+              style={{
+                background: 'var(--accent)',
+                color: 'var(--bg)',
+                boxShadow: '0 18px 30px rgba(107,31,58,0.18)',
+              }}
+            >
               {previewMode ? "Preview Only" : "Scan"}
             </button>
-            {/* <button className="flex items-center gap-1.5 px-5 py-3 rounded-xl border border-violet-600/45 bg-transparent text-violet-400 text-sm font-medium cursor-pointer hover:bg-violet-600/10 transition-all">
-              <FilterSvg /> Advanced Filters
-            </button> */}
-            <button onClick={() => setShowExamples(v => !v)}
-              className="flex items-center gap-2 px-6 py-3 rounded-2xl border border-violet-500/45 bg-violet-500/[0.03] text-base font-medium cursor-pointer hover:bg-violet-500/10 transition-all">
+            <button
+              onClick={() => setShowExamples((v) => !v)}
+              className="flex items-center gap-2 px-6 py-3 rounded-2xl text-base font-medium cursor-pointer transition-all"
+              style={{
+                border: '1px solid var(--border-hi)',
+                background: 'var(--accent-bg)',
+                color: 'var(--accent)',
+              }}
+            >
               <BulbSvg /> Examples
             </button>
           </div>
 
           {showExamples && (
-            <div className={`w-full max-w-[980px] ${theme === 'dark' ? 'bg-[#0f141e]/85 border-cyan-500/10' : 'bg-white/85 border-gray-300'} rounded-2xl p-5`}>
+            <div
+              className="w-full max-w-[980px] rounded-2xl p-5"
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(107,31,58,0.15)',
+              }}
+            >
               <div className="mt-2 grid w-full grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-                {EXAMPLES.map(ex => (
-                  <button key={ex} onClick={() => { setQuery(ex); setShowExamples(false); }}
-                    className={`w-full px-4 py-1.5 rounded-lg bg-transparent text-center text-xs font-medium cursor-pointer transition-all ${theme === 'dark' ? 'border border-cyan-400/35 text-cyan-400 hover:bg-cyan-400/10' : 'border border-blue-400/35 text-blue-600 hover:bg-blue-400/10'}`}>
+                {EXAMPLES.map((ex) => (
+                  <button
+                    key={ex}
+                    onClick={() => {
+                      setQuery(ex);
+                      setShowExamples(false);
+                    }}
+                    className="w-full px-4 py-1.5 rounded-lg text-center text-xs font-medium cursor-pointer transition-all"
+                    style={{
+                      border: '1px solid var(--border)',
+                      background: 'rgba(26,26,46,0.04)',
+                      color: 'var(--text)',
+                    }}
+                  >
                     {ex}
                   </button>
                 ))}
@@ -351,8 +486,7 @@ function HomePage({ onScan, theme, previewMode = false, onRequireLogin }) {
           )}
         </div>
       </div>
-      </main>
-    </>
+    </main>
   );
 }
 
@@ -375,6 +509,7 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
   const [isSessionReady, setIsSessionReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const logRef = useRef(null);
+  const shouldStickToBottomRef = useRef(true);
   const isCancelledRef = useRef(false);
   const onScanCompleteRef = useRef(onScanComplete);
   const onCancelRef = useRef(onCancel);
@@ -657,7 +792,18 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
     return undefined;
   }, [scanDone, displayProgress, scanResponse, scanError, isPaused, isCancelled]);
 
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [logs]);
+  const handleLogScroll = () => {
+    const node = logRef.current;
+    if (!node) return;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom < 32;
+  };
+
+  useEffect(() => {
+    const node = logRef.current;
+    if (!node || !shouldStickToBottomRef.current) return;
+    node.scrollTop = node.scrollHeight;
+  }, [logs]);
   useEffect(() => {
     if (!isSessionReady || !target) return;
     const payload = {
@@ -722,7 +868,7 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
   };
 
   return (
-    <main className="w-full min-h-[calc(100vh-88px)] px-6 pt-0 pb-6 -mt-2">
+    <main className="relative z-10 w-full min-h-[calc(100vh-88px)] px-6 pt-0 pb-6 -mt-2">
       <style>{`
         @keyframes scan-bar-sheen {
           0% { transform: translateX(-140%); opacity: 0; }
@@ -738,23 +884,38 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
         .stage-change-once {
           animation: stage-fade-slide 280ms ease-out;
         }
+        .scan-log-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: ${theme === 'dark' ? '#22d3ee #0f172a' : '#94a3b8 #e5e7eb'};
+        }
+        .scan-log-scroll::-webkit-scrollbar {
+          width: 8px;
+        }
+        .scan-log-scroll::-webkit-scrollbar-track {
+          background: ${theme === 'dark' ? '#0f172a' : '#e5e7eb'};
+          border-radius: 999px;
+        }
+        .scan-log-scroll::-webkit-scrollbar-thumb {
+          background: ${theme === 'dark' ? '#22d3ee' : '#94a3b8'};
+          border-radius: 999px;
+        }
       `}</style>
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-7xl mt-6">
       <div className="text-center mb-4">
-        <h1 className="text-[32px] font-bold mb-1 bg-clip-text text-transparent"
-          style={{ backgroundImage: theme === 'dark' ? "linear-gradient(90deg,#67e8f9,#06b6d4)" : "linear-gradient(90deg,#60a5fa,#6366f1)" }}>
+        <h4 className="text-[19px] font-bold mb-1"
+          style={{ color: theme === 'dark' ? '#e2e8f0' : 'var(--maroon)' }}>
           {isCancelled ? "Scan Cancelled" : scanDone && displayProgress >= 99.5 ? "Scan Complete" : "Scanning in Progress"}
-        </h1>
-        <p className={`text-[17px] ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} m-0`}>
-          Target: <span className={`${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'} font-semibold`}>{target}</span>
+        </h4>
+        <p className={`text-[16px] ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} m-0`}>
+          Target: <span className={`${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'} font-semibold`}>{target}</span>
         </p>
       </div>
 
       {/* Stage Card */}
-      <div className={`mx-auto max-w-[1060px] ${theme === 'dark' ? 'bg-[#0b1020]/98 border-cyan-500/18' : 'bg-white/95 border-gray-300'} rounded-[16px] border px-6 py-4 mb-5`}>
+      <div className={`mx-auto max-w-[1060px] ${theme === 'dark' ? 'bg-[#0b1020]/98 border-cyan-500/18' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)]'} rounded-[16px] border px-6 py-4 mb-5`}>
         <div className="flex items-start justify-between mb-4">
           <div className={`flex items-start gap-3 ${animateStageChange ? "stage-change-once" : ""}`}>
-            <span className={`flex pt-0.5 ${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'}`}><StageIcon type={STAGES[currentStage].icon} size={42} /></span>
+            <span className={`flex pt-0.5 ${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'}`}><StageIcon type={STAGES[currentStage].icon} size={42} /></span>
             <div className="flex flex-col gap-3 -ml-1">
               <div>
               <div className={`text-[26px] font-bold leading-none ${theme === 'dark' ? 'text-slate-100' : 'text-gray-900'}`}>{STAGES[currentStage].label}</div>
@@ -773,7 +934,7 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
                           : "opacity-50 cursor-not-allowed border-gray-200 bg-transparent text-gray-400"
                         : theme === "dark"
                           ? "border-cyan-400/35 bg-transparent text-cyan-400 hover:bg-cyan-400/10"
-                          : "border-blue-200 bg-transparent text-blue-600 hover:bg-blue-50/40"
+                          : "border-[rgba(107,31,58,0.2)] bg-transparent text-[var(--accent)] hover:bg-[rgba(107,31,58,0.12)]"
                     }`}
                     style={theme === "dark" && !controlsLocked
                       ? {
@@ -806,7 +967,7 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
                           : "opacity-50 cursor-not-allowed border-gray-200 bg-transparent text-gray-400"
                         : theme === "dark"
                           ? "border-cyan-400/35 bg-transparent text-cyan-400 hover:bg-cyan-400/10"
-                          : "border-blue-200 bg-transparent text-blue-600 hover:bg-blue-50/40"
+                          : "border-[rgba(107,31,58,0.2)] bg-transparent text-[var(--accent)] hover:bg-[rgba(107,31,58,0.12)]"
                     }`}
                     style={theme === "dark" && !controlsLocked
                       ? {
@@ -830,7 +991,7 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
               </div>
             </div>
           </div>
-          <div className={`text-[42px] font-black font-mono leading-none ${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'}`}>{Math.round(displayProgress)}%</div>
+          <div className={`text-[42px] font-black font-mono leading-none ${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'}`}>{Math.round(displayProgress)}%</div>
         </div>
 
         {/* Progress bar */}
@@ -856,9 +1017,9 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
             return (
               <div key={i} className={`flex flex-col items-center justify-center py-2.5 px-3 rounded-[12px] min-h-[60px] border transition-all
                 ${done ? "border-emerald-400/70 bg-emerald-500/10"
-                  : active ? (theme === 'dark' ? "border-cyan-400/65 bg-cyan-400/[0.05]" : "border-blue-400/65 bg-blue-400/[0.05]")
-                  : theme === 'dark' ? "border-slate-800 bg-[#0a0f1b]" : "border-gray-200 bg-gray-50"}`}>
-                <span className={`flex ${done ? "text-emerald-400" : active ? (theme === 'dark' ? "text-cyan-400" : "text-blue-600") : theme === 'dark' ? "text-slate-500" : "text-gray-500"}`}>
+                  : active ? (theme === 'dark' ? "border-cyan-400/65 bg-cyan-400/[0.05]" : "border-[rgba(107,31,58,0.2)] bg-[rgba(107,31,58,0.08)]")
+                  : theme === 'dark' ? "border-slate-800 bg-[#0a0f1b]" : "border-[rgba(26,26,46,0.12)] bg-[rgba(245,240,232,0.95)]"}`}>
+                <span className={`flex ${done ? "text-emerald-400" : active ? (theme === 'dark' ? "text-cyan-400" : "text-[var(--accent)]") : theme === 'dark' ? "text-slate-500" : "text-gray-500"}`}>
                   <StageIcon type={iconType} size={22} />
                 </span>
                 <span className={`text-[13px] mt-1.5 text-center leading-tight font-medium
@@ -883,19 +1044,23 @@ function ScanPage({ target, onScanComplete, onCancel, theme }) {
       )}
       <div className={`mx-auto max-w-[1060px] ${theme === 'dark' ? 'bg-[#0a0e16]/95 border-cyan-500/[0.10]' : 'bg-white/95 border-gray-300'} rounded-[16px] border overflow-hidden`}>
         <div className={`flex items-center justify-between px-8 py-5 border-b ${theme === 'dark' ? 'border-cyan-500/[0.08]' : 'border-gray-300'}`}>
-          <span className={`flex items-center gap-2 ${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'}`}>
-            <TerminalSvg size={16} color={theme === 'dark' ? "#22d3ee" : "#3b82f6"} />
+          <span className={`flex items-center gap-2 ${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'}`}>
+            <TerminalSvg size={16} color={theme === 'dark' ? "#22d3ee" : "#6b1f3a"} />
             <span className="font-mono text-[15px]">scan.log</span>
           </span>
         </div>
-        <div ref={logRef} className="px-8 py-6 max-h-72 overflow-y-auto leading-loose">
+        <div
+          ref={logRef}
+          onScroll={handleLogScroll}
+          className="scan-log-scroll px-8 py-6 h-[320px] overflow-y-auto overscroll-contain leading-loose"
+        >
           {logs.map((log, i) => (
             <div key={i} className="flex gap-3 mb-0.5">
-              <span className={`${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'} font-mono text-xs flex-shrink-0`}>{log.time}</span>
+              <span className={`${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'} font-mono text-xs flex-shrink-0`}>{log.time}</span>
               <span className={`text-slate-400 font-mono text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>{log.msg}</span>
             </div>
           ))}
-          {progress < 100 && !isCancelled && <span className={`${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'} font-mono animate-pulse`}>▋</span>}
+          {progress < 100 && !isCancelled && <span className={`${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'} font-mono animate-pulse`}>▋</span>}
         </div>
       </div>
       </div>
@@ -1002,6 +1167,236 @@ function stripPortPrefix(message, port) {
   return message.replace(new RegExp(`^Port\\s*${portLabel}:\\s*`, "i"), "");
 }
 
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function truncateText(value, max = 120) {
+  const text = String(value || "").trim();
+  if (!text) return "N/A";
+  return text.length > max ? `${text.slice(0, max).trimEnd()}...` : text;
+}
+
+function formatLabel(value) {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+const DOMAIN_INTEL_SECTION_SCHEMAS = [
+  {
+    title: "Background",
+    keys: ["site_title", "date_first_seen", "site_rank", "primary_language", "description"],
+  },
+  {
+    title: "Network",
+    keys: [
+      "site",
+      "domain",
+      "netblock_owner",
+      "nameserver",
+      "hosting_company",
+      "domain_registrar",
+      "hosting_country",
+      "nameserver_organisation",
+      "ipv4_address",
+      "organisation",
+      "ipv4_autonomous_systems",
+      "dns_admin",
+      "ipv6_address",
+      "top_level_domain",
+      "ipv6_autonomous_systems",
+      "dns_security_extensions",
+      "reverse_dns",
+    ],
+  },
+  {
+    title: "Security",
+    keys: ["ssl_tls", "sender_policy_framework", "dmarc"],
+  },
+  {
+    title: "DNS Records",
+    keys: [
+      "robtex_dnssec_status",
+      "robtex_a_records",
+      "robtex_aaaa_records",
+      "robtex_cname_records",
+      "robtex_mx_records",
+      "robtex_ns_records",
+      "robtex_txt_records",
+      "robtex_soa_records",
+      "robtex_passive_dns",
+      "robtex_passive_dns_count",
+      "robtex_source",
+      "robtex_records_table",
+      "robtex_dns_history_table",
+      "robtex_resolution_tree",
+    ],
+  },
+  {
+    title: "Technology",
+    keys: ["web_trackers", "site_technology"],
+  },
+];
+
+function buildDomainIntelSections(details, displayItems) {
+  const hasVisibleValue = (value, kind = null) => {
+    if (kind) {
+      if (Array.isArray(value)) return value.length > 0;
+      return value != null;
+    }
+    if (Array.isArray(value)) return value.length > 0;
+    if (value && typeof value === "object") return Object.keys(value).length > 0;
+    if (typeof value === "string") return value.trim() !== "";
+    return value != null;
+  };
+
+  const detailMap = {};
+  Object.entries(details || {}).forEach(([key, value]) => {
+    if (!hasVisibleValue(value)) return;
+    detailMap[key] = {
+      key,
+      label: formatLabel(key),
+      value,
+    };
+  });
+
+  toArray(displayItems).forEach((item) => {
+    if (!item?.key) return;
+    if (!hasVisibleValue(item.value, item.kind || null)) return;
+    detailMap[item.key] = {
+      key: item.key,
+      label: item.label || formatLabel(item.key),
+      value: item.value,
+      kind: item.kind || null,
+    };
+  });
+
+  const usedKeys = new Set();
+  const sections = DOMAIN_INTEL_SECTION_SCHEMAS.map((schema) => {
+    const items = schema.keys
+      .map((key) => {
+        usedKeys.add(key);
+        return detailMap[key] || null;
+      })
+      .filter(Boolean);
+    return { title: schema.title, items };
+  });
+
+  const extras = Object.values(detailMap).filter((item) => !usedKeys.has(item.key));
+  if (extras.length > 0) {
+    sections.push({ title: "Other", items: extras });
+  }
+
+  return sections.filter((section) => section.items.length > 0);
+}
+
+function chunkPairs(items) {
+  const pairs = [];
+  for (let index = 0; index < items.length; index += 2) {
+    pairs.push(items.slice(index, index + 2));
+  }
+  return pairs;
+}
+
+function renderRobtexRecordsTable(rows, theme) {
+  const items = toArray(rows);
+  if (items.length === 0) return null;
+  return (
+    <div className={`overflow-hidden rounded-xl border ${theme === 'dark' ? 'border-slate-700 bg-[#0b1220]/70' : 'border-slate-200 bg-slate-50/80'}`}>
+      <div className={`grid grid-cols-[90px_90px_minmax(0,1fr)] px-4 py-2 text-[11px] font-bold uppercase tracking-widest ${theme === 'dark' ? 'bg-slate-900/80 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+        <div>Type</div>
+        <div>Count</div>
+        <div>Sample Data</div>
+      </div>
+      {items.map((row, index) => (
+        <div
+          key={`${row.type}-${index}`}
+          className={`grid grid-cols-[90px_90px_minmax(0,1fr)] gap-3 px-4 py-3 text-sm ${theme === 'dark' ? 'border-t border-slate-800 text-slate-200' : 'border-t border-slate-200 text-slate-800'}`}
+        >
+          <div className="font-semibold">{row.type}</div>
+          <div className={`${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>{row.count}</div>
+          <div className="break-words font-mono text-xs leading-6">{row.sample}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function renderRobtexHistoryTable(rows, theme) {
+  const items = toArray(rows);
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {items.map((row, index) => (
+        <div
+          key={`${row.type}-${row.value}-${index}`}
+          className={`rounded-xl border px-4 py-3 ${theme === 'dark' ? 'border-slate-700 bg-[#0b1220]/70' : 'border-slate-200 bg-slate-50/80'}`}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-md px-2 py-1 text-xs font-bold ${theme === 'dark' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}>{row.type}</span>
+            <span className="font-mono text-sm break-all">{row.value}</span>
+          </div>
+          <div className={`mt-2 text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>
+            {row.first_seen} to {row.last_seen} | {row.observations} obs | {row.active_host_count} host{row.active_host_count === 1 ? "" : "s"}
+          </div>
+          {toArray(row.hosts).length > 0 ? (
+            <div className={`mt-1 break-all text-[11px] font-mono ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>
+              {row.hosts.join(", ")}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function renderRobtexResolutionTree(rows, theme) {
+  const items = toArray(rows);
+  if (items.length === 0) return null;
+  return (
+    <div className={`overflow-hidden rounded-xl border ${theme === 'dark' ? 'border-slate-700 bg-[#0b1220]/70' : 'border-slate-200 bg-slate-50/80'}`}>
+      {items.map((row, index) => (
+        <div key={`${row.type}-${row.value}-${index}`} className={`${index > 0 ? theme === 'dark' ? 'border-t border-slate-800' : 'border-t border-slate-200' : ''}`}>
+          <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-3 px-4 py-3">
+            <div className={`text-sm font-bold ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>{row.type}</div>
+            <div>
+              <div className="break-all font-mono text-sm">{row.value}</div>
+              {row.annotation ? (
+                <div className={`mt-1 text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>{row.annotation}</div>
+              ) : null}
+            </div>
+          </div>
+          {toArray(row.children).length > 0 ? (
+            <div className={`px-4 pb-3 pl-10 ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>
+              {row.children.map((child, childIndex) => (
+                <div key={`${child.type}-${child.value}-${childIndex}`} className="grid grid-cols-[56px_minmax(0,1fr)] gap-3 py-1.5">
+                  <div className={`text-xs font-semibold ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>{child.type}</div>
+                  <div>
+                    <div className="break-all font-mono text-xs">{child.value}</div>
+                    {child.annotation ? (
+                      <div className={`mt-0.5 text-[11px] ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>{child.annotation}</div>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function renderDomainIntelComplexItem(item, theme) {
+  if (item.kind === "records_table") return renderRobtexRecordsTable(item.value, theme);
+  if (item.kind === "history_table") return renderRobtexHistoryTable(item.value, theme);
+  if (item.kind === "resolution_tree") return renderRobtexResolutionTree(item.value, theme);
+  return null;
+}
+
 const PORT_PROTOCOL_LABELS = {
   21: "FTP",
   22: "SSH",
@@ -1056,40 +1451,57 @@ function getDisplayProtocol(portInfo) {
 }
 
 function HostCard({ host, theme }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(host.defaultOpen));
   const hostStateLabel = host.hostState || "Host is up";
   const riskLabel = getRiskLabel(host.vulnerabilityItems ?? host.vulnerabilities);
   const countryBadge = getCountryBadge(host);
+  const portEntries = toArray(host.ports);
+  const insecureProtocols = toArray(host.insecureProtocols);
+  const tlsIssues = toArray(host.tlsIssues);
+  const credentialFindings = toArray(host.credentialScan?.findings);
+  const relatedSubdomains = toArray(host.relatedSubdomains);
+  const riskSummary = host.riskSummary || {};
+  const serviceIntel = portEntries.filter((item) => item?.banner || toArray(item?.scripts).length > 0);
+  const domainIntelligence = host.domainIntelligence || {};
+  const domainIntelSections = buildDomainIntelSections(
+    domainIntelligence.details || {},
+    toArray(domainIntelligence.display_details),
+  );
+
   return (
     <div className={`rounded-xl p-6 border transition-colors duration-200 ${open
       ? theme === 'dark'
         ? 'bg-[#0d1220]/95 border-sky-400/70 text-slate-200'
-        : 'bg-white border-sky-400 text-gray-900'
+        : 'bg-white border-[rgba(107,31,58,0.3)] text-gray-900'
       : theme === 'dark'
         ? 'bg-[#0d1220]/95 border-cyan-500/10 text-slate-200 hover:border-sky-400/70'
-        : 'bg-white border-gray-200 text-gray-900 hover:border-sky-400'
+        : 'bg-[rgba(245,240,232,0.95)] border-[rgba(107,31,58,0.18)] text-[var(--text)] hover:border-[rgba(107,31,58,0.4)]'
     }`}>
       {/* Header */}
       <div className="flex items-start justify-between mb-5">
         <div className="flex items-start gap-3.5">
-          <div className={`w-9 h-9 rounded-lg ${theme === 'dark' ? 'bg-cyan-400/8 border-cyan-400/20 text-slate-400' : 'bg-blue-50 border-blue-100 text-blue-600'} flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5`}>
+          <div className={`w-9 h-9 rounded-lg ${theme === 'dark' ? 'bg-cyan-400/8 border-cyan-400/20 text-slate-400' : 'bg-[rgba(107,31,58,0.05)] border-[rgba(107,31,58,0.2)] text-[var(--accent)]'} flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5`}>
             {countryBadge}
           </div>
           <div>
             <div className="flex items-center gap-2.5 flex-wrap mb-1">
-              <span className={`text-lg font-bold font-mono ${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'}`}>{host.hostname}</span>
+              <span className={`text-lg font-bold font-mono ${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'}`}>{host.hostname}</span>
               <StatusBadge label={riskLabel} />
               <StatusBadge label={hostStateLabel.toUpperCase()} />
             </div>
             <div className={`text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>{host.vendor || host.provider || "Unknown vendor"}</div>
-            <div className={`text-xs ${theme === 'dark' ? 'text-slate-600' : 'text-gray-500'} font-mono mt-0.5`}>Hostname: {host.hostname}</div>
+            <div className={`text-xs ${theme === 'dark' ? 'text-slate-600' : 'text-gray-500'} font-mono mt-0.5`}>
+              Hostname: {host.hostname}
+              {host.ip ? `  |  IP: ${host.ip}` : ""}
+              {host.domain && host.domain !== host.hostname ? `  |  Domain: ${host.domain}` : ""}
+            </div>
           </div>
         </div>
         <button onClick={() => setOpen(v => !v)}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold cursor-pointer transition-all flex-shrink-0 ${
             theme === 'dark'
               ? 'border-cyan-400/35 bg-transparent text-cyan-400 hover:bg-cyan-400/10'
-              : 'border-blue-400/35 bg-transparent text-blue-600 hover:bg-blue-400/10'
+              : 'border-[rgba(107,31,58,0.2)] bg-transparent text-[var(--accent)] hover:bg-[rgba(107,31,58,0.12)]'
           }`}>
           {open ? "Collapse" : "Expand"} <ChevronSvg open={open} />
         </button>
@@ -1098,8 +1510,8 @@ function HostCard({ host, theme }) {
       {/* Summary */}
       <div className="grid grid-cols-4 gap-4">
         {[
-          { label: "OPEN PORTS",      val: `${host.openPorts} detected`,   cls: theme === 'dark' ? "text-cyan-400" : "text-blue-600" },
-          { label: "SERVICES",         val: `${host.services} identified`,  cls: theme === 'dark' ? "text-cyan-400" : "text-blue-600" },
+          { label: "OPEN PORTS",      val: `${host.openPorts} detected`,   cls: theme === 'dark' ? "text-cyan-400" : "text-[var(--accent)]" },
+          { label: "SERVICES",         val: `${host.services} identified`,  cls: theme === 'dark' ? "text-cyan-400" : "text-[var(--accent)]" },
           { label: "OS DETECTION",     val: host.osDetection,               cls: "text-violet-400" },
           { label: "VULNERABILITIES",  val: `${host.vulnerabilities} found`,cls: "text-amber-400" },
         ].map(item => (
@@ -1113,7 +1525,7 @@ function HostCard({ host, theme }) {
       {/* Expanded */}
       {open && (
         <div className="mt-5">
-          <div className={`h-px mb-6 ${theme === 'dark' ? 'bg-cyan-500/8' : 'bg-blue-200'}`} />
+          <div className={`h-px mb-6 ${theme === 'dark' ? 'bg-cyan-500/8' : 'bg-[rgba(107,31,58,0.1)]'}`} />
 
           {/* Port Scan Table */}
           <div className="mb-6">
@@ -1123,19 +1535,18 @@ function HostCard({ host, theme }) {
                 <thead>
                   <tr>
                     {["PORT","PROTOCOL","SERVICE","PRODUCT","VERSION"].map(h => (
-                      <th key={h} className={`text-left py-2.5 px-4 text-[11px] font-bold tracking-wider ${theme === 'dark' ? 'text-slate-400 border-b border-white/5 bg-white/[0.02]' : 'text-gray-500 border-b border-gray-200 bg-gray-50'}`}>{h}</th>
+                      <th key={h} className={`text-left py-2.5 px-4 text-[11px] font-bold tracking-wider ${theme === 'dark' ? 'text-slate-400 border-b border-white/5 bg-white/[0.02]' : 'text-gray-500 border-b border-[rgba(107,31,58,0.12)] bg-[rgba(245,240,232,0.95)]'}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {host.ports.map((p, i) => (
+                  {portEntries.map((p, i) => (
                     <tr key={i} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
-                      <td className={`py-3 px-4 font-semibold font-mono ${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'}`}>{p.port}</td>
-                      <td className="py-3 px-4 text-slate-400">{getDisplayProtocol(p)}</td>
-                      <td className="py-3 px-4 text-slate-400">{p.service}</td>
-                      <td className="py-3 px-4 text-slate-300 font-mono">{p.product}</td>
-                      <td className="py-3 px-4 text-slate-400">{p.version}</td>
-                      
+                      <td className={`py-3 px-4 font-semibold font-mono ${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'}`}>{p.port}</td>
+                      <td className={`py-3 px-4 ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>{getDisplayProtocol(p)}</td>
+                      <td className={`py-3 px-4 ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>{p.service && p.service !== "unknown" ? p.service : "Unidentified service"}</td>
+                      <td className={`py-3 px-4 font-mono ${theme === 'dark' ? 'text-slate-300' : 'text-gray-800'}`}>{p.product || "Fingerprint unavailable"}</td>
+                      <td className={`py-3 px-4 ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>{p.version || "Not detected"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1143,13 +1554,144 @@ function HostCard({ host, theme }) {
             </div>
           </div>
 
+      <div className="space-y-6 mb-6">
+            <div>
+              <SectionTitle color="bg-sky-400" textColor="text-sky-400">ASSET INTELLIGENCE</SectionTitle>
+              <div className={`rounded-2xl border p-5 ${theme === 'dark' ? 'border-sky-500/20 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.12),transparent_32%),#0b1220]' : 'border-sky-200 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.08),transparent_30%),white]'}`}>
+                <div className={`flex flex-wrap items-center gap-x-6 gap-y-2 border-b pb-4 mb-4 ${theme === 'dark' ? 'border-slate-800 text-slate-300' : 'border-slate-200 text-slate-700'}`}>
+                  <div><span className={`mr-2 text-[11px] font-bold uppercase tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>Status</span>{domainIntelligence.enabled ? "Collected" : "Unavailable"}</div>
+                  <div><span className={`mr-2 text-[11px] font-bold uppercase tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>DNSSEC</span>{domainIntelligence.details?.robtex_dnssec_status || "Unknown"}</div>
+                  <div><span className={`mr-2 text-[11px] font-bold uppercase tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>Subdomains</span>{relatedSubdomains.length}</div>
+                  <div><span className={`mr-2 text-[11px] font-bold uppercase tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-slate-500'}`}>DNS History</span>{domainIntelligence.details?.robtex_passive_dns_count || 0}</div>
+                </div>
+                {domainIntelligence.note ? (
+                  <div className={`mb-4 text-sm ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>{domainIntelligence.note}</div>
+                ) : null}
+                {domainIntelSections.length === 0 ? (
+                  <div className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No domain intelligence recorded for this asset.</div>
+                ) : (
+                  <div className="space-y-5">
+                    {domainIntelSections.map((section) => (
+                      <div key={section.title} className={`border-l-2 pl-4 ${theme === 'dark' ? 'border-sky-500/30' : 'border-sky-300'}`}>
+                        <div className="mb-3">
+                          <div className={`text-base font-semibold ${theme === 'dark' ? 'text-slate-100' : 'text-slate-900'}`}>{section.title}</div>
+                        </div>
+                        <div>
+                          {chunkPairs(section.items.filter((item) => !item.kind)).map((pair, rowIndex) => (
+                            <div key={`${section.title}-${rowIndex}`} className={`border-t first:border-t-0 ${theme === 'dark' ? 'border-slate-800' : 'border-slate-200'}`}>
+                              {pair.map((item) => (
+                                  <div key={item.key} className="grid grid-cols-[180px_minmax(0,1fr)] items-start gap-4 py-2">
+                                    <div className={`text-sm font-semibold ${theme === 'dark' ? 'text-slate-400' : 'text-slate-600'}`}>{item.label}</div>
+                                  <div className={`text-sm leading-6 break-words ${theme === 'dark' ? 'text-slate-100' : 'text-slate-900'}`}>{String(item.value)}</div>
+                                  </div>
+                              ))}
+                            </div>
+                          ))}
+                          {section.items.filter((item) => item.kind).map((item) => (
+                            <div key={item.key} className="pt-2">
+                              <div className={`mb-2 text-sm font-semibold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>{item.label}</div>
+                              {renderDomainIntelComplexItem(item, theme)}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div>
+              <SectionTitle color="bg-rose-400" textColor="text-rose-400">PRIORITIZED RISK</SectionTitle>
+              <div className={`rounded-lg p-4 border ${theme === 'dark' ? 'bg-[#111827]/60 border-slate-700' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)]'}`}>
+                <div className="grid grid-cols-3 gap-3 mb-3">
+                  <div>
+                    <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>ASSET IMPORTANCE</div>
+                    <div className={`mt-1 text-sm font-semibold ${theme === 'dark' ? 'text-rose-300' : 'text-rose-600'}`}>{riskSummary.asset_importance ? formatLabel(riskSummary.asset_importance) : "N/A"}</div>
+                  </div>
+                  <div>
+                    <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>IMPORTANCE SCORE</div>
+                    <div className={`mt-1 text-sm font-semibold font-mono ${theme === 'dark' ? 'text-slate-200' : 'text-gray-900'}`}>{riskSummary.asset_importance_score ?? "N/A"}</div>
+                  </div>
+                  <div>
+                    <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>HIGHEST RISK</div>
+                    <div className={`mt-1 text-sm font-semibold font-mono ${theme === 'dark' ? 'text-amber-300' : 'text-amber-600'}`}>{riskSummary.highest_risk_score ?? 0}</div>
+                  </div>
+                </div>
+                {host.vulnerabilityItems?.length ? (
+                  <div className="space-y-2">
+                    {host.vulnerabilityItems.slice(0, 3).map((item, index) => (
+                      <div key={`${item?.title || item?.cve || "risk"}-${index}`} className={`rounded-md px-3 py-2 border ${theme === 'dark' ? 'border-white/5 bg-white/[0.02]' : 'border-gray-200 bg-white'}`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className={`text-sm font-semibold ${theme === 'dark' ? 'text-slate-100' : 'text-gray-900'}`}>{item.title || item.cve || "Risk finding"}</span>
+                          <span className={`text-xs font-mono ${theme === 'dark' ? 'text-amber-300' : 'text-amber-700'}`}>Risk {item.risk_score ?? 0}</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <span className={`rounded-md px-2 py-1 text-[11px] font-mono ${theme === 'dark' ? 'bg-cyan-500/[0.08] text-cyan-300 border border-cyan-500/20' : 'bg-[rgba(107,31,58,0.05)] text-[var(--accent)] border-[rgba(107,31,58,0.2)]'}`}>
+                            CVE: {item.cve || item.cve_id || "UNKNOWN"}
+                          </span>
+                          {Array.isArray(item.cwe_ids) && item.cwe_ids.length > 0 && (
+                            <span className={`rounded-md px-2 py-1 text-[11px] font-mono ${theme === 'dark' ? 'bg-amber-500/[0.08] text-amber-300 border border-amber-500/20' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                              CWE: {item.cwe_ids.join(", ")}
+                            </span>
+                          )}
+                        </div>
+                        {item.weakness_summary && (
+                          <div className={`mt-2 text-xs ${theme === 'dark' ? 'text-amber-200' : 'text-amber-800'}`}>
+                            {item.weakness_summary}
+                          </div>
+                        )}
+                        <div className={`mt-1 text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>
+                          {item.risk_formula || truncateText(item.description, 90)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No prioritized host risks were generated.</span>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <SectionTitle color="bg-emerald-400" textColor="text-emerald-400">SERVICE INTELLIGENCE</SectionTitle>
+              <div className={`rounded-lg p-4 border flex flex-col gap-3 ${theme === 'dark' ? 'bg-[#111827]/60 border-slate-700' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)]'}`}>
+                {serviceIntel.length === 0 ? (
+                  <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No banners or NSE script output captured for this host.</span>
+                ) : (
+                  serviceIntel.slice(0, 6).map((item, index) => (
+                    <div key={`${item?.port || "svc"}-${index}`} className={`rounded-md px-3 py-3 border ${theme === 'dark' ? 'border-white/5 bg-white/[0.02]' : 'border-gray-200 bg-white'}`}>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className={`text-sm font-semibold font-mono ${theme === 'dark' ? 'text-emerald-300' : 'text-emerald-700'}`}>Port {item.port} - {item.service || "unknown"}</span>
+                        <span className={`text-[11px] ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>{String(item.banner_source || "socket").toUpperCase()}</span>
+                      </div>
+                      <div className={`mt-1 text-xs ${theme === 'dark' ? 'text-slate-300' : 'text-gray-700'}`}>
+                        Banner: {truncateText(item.banner || "No banner captured.", 110)}
+                      </div>
+                      {toArray(item.scripts).length > 0 && (
+                        <div className={`mt-2 text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'}`}>
+                          {toArray(item.scripts).slice(0, 2).map((script, scriptIndex) => (
+                            <div key={`${script?.id || "script"}-${scriptIndex}`}>
+                              <span className={`font-mono ${theme === 'dark' ? 'text-cyan-300' : 'text-[var(--accent)]'}`}>{script.id || "nse-script"}:</span> {truncateText(script.output, 90)}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            </div>
+          </div>
+
           {/* Insecure Protocols */}
           <div className="mb-6">
             <SectionTitle color="bg-amber-400" textColor="text-amber-400">INSECURE PROTOCOL DETECTION</SectionTitle>
-            <div className={`rounded-lg p-4 flex flex-col gap-2.5 ${theme === 'dark' ? 'bg-[#111827]/60 border border-slate-700' : 'bg-gray-50 border border-gray-200'}`}>
-              {host.insecureProtocols.length === 0
+            <div className={`rounded-lg p-4 flex flex-col gap-2.5 ${theme === 'dark' ? 'bg-[#111827]/60 border border-slate-700' : 'bg-[rgba(245,240,232,0.95)] border border-[rgba(26,26,46,0.12)]'}`}>
+              {insecureProtocols.length === 0
                 ? <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No insecure protocols detected.</span>
-                : host.insecureProtocols.map((item, i) => (
+                : insecureProtocols.map((item, i) => (
                   <div key={i} className="flex items-center gap-2.5">
                     <span className="text-amber-400 flex"><TriangleSvg size={14} /></span>
                     <span className={`${theme === 'dark' ? 'text-slate-200' : 'text-gray-700'} font-mono text-sm`}>
@@ -1164,10 +1706,10 @@ function HostCard({ host, theme }) {
           {/* TLS Issues */}
           <div className="mb-6">
             <SectionTitle color="bg-violet-400" textColor="text-violet-400">TLS / WEAK ENCRYPTION OBSERVATIONS</SectionTitle>
-            <div className={`rounded-lg p-4 flex flex-col gap-2.5 ${theme === 'dark' ? 'bg-[#111827]/60 border border-slate-700' : 'bg-gray-50 border border-gray-200'}`}>
-              {host.tlsIssues.length === 0
+            <div className={`rounded-lg p-4 flex flex-col gap-2.5 ${theme === 'dark' ? 'bg-[#111827]/60 border border-slate-700' : 'bg-[rgba(245,240,232,0.95)] border border-[rgba(26,26,46,0.12)]'}`}>
+              {tlsIssues.length === 0
                 ? <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No TLS issues detected.</span>
-                : host.tlsIssues.map((item, i) => (
+                : tlsIssues.map((item, i) => (
                   <div key={i} className="flex items-center gap-2.5">
                     <span className="text-violet-400 flex"><ShieldSvg size={14} /></span>
                     <span className={`${theme === 'dark' ? 'text-slate-200' : 'text-gray-700'} font-mono text-sm`}>
@@ -1176,6 +1718,44 @@ function HostCard({ host, theme }) {
                   </div>
                 ))
               }
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+            <div>
+              <SectionTitle color="bg-cyan-400" textColor="text-cyan-400">SUBDOMAIN LINKS</SectionTitle>
+              <div className={`rounded-lg p-4 flex flex-col gap-2.5 ${theme === 'dark' ? 'bg-[#111827]/60 border border-slate-700' : 'bg-[rgba(245,240,232,0.95)] border border-[rgba(26,26,46,0.12)]'}`}>
+                {relatedSubdomains.length === 0 ? (
+                  <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No related subdomains mapped to this host.</span>
+                ) : (
+                  relatedSubdomains.map((item, index) => (
+                    <div key={`${item?.subdomain || "subdomain"}-${index}`} className="flex items-center justify-between gap-3">
+                      <span className={`text-sm font-mono ${theme === 'dark' ? 'text-cyan-300' : 'text-[var(--accent)]'}`}>{item.subdomain}</span>
+                      <span className={`text-xs ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>{item.source || "inventory"}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div>
+              <SectionTitle color="bg-red-400" textColor="text-red-400">SSH CREDENTIAL CHECKS</SectionTitle>
+              <div className={`rounded-lg p-4 flex flex-col gap-2.5 ${theme === 'dark' ? 'bg-[#111827]/60 border border-slate-700' : 'bg-[rgba(245,240,232,0.95)] border border-[rgba(26,26,46,0.12)]'}`}>
+                {!host.credentialScan?.enabled ? (
+                  <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>Credential validation was not enabled for this scan.</span>
+                ) : credentialFindings.length === 0 ? (
+                  <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No supplied SSH credentials succeeded.</span>
+                ) : (
+                  credentialFindings.map((item, index) => (
+                    <div key={`${item?.username || "credential"}-${index}`} className={`rounded-md px-3 py-3 border ${theme === 'dark' ? 'border-red-500/20 bg-red-500/[0.05]' : 'border-red-200 bg-red-50'}`}>
+                      <div className={`text-sm font-semibold ${theme === 'dark' ? 'text-red-300' : 'text-red-700'}`}>{item.title || "SSH credential finding"}</div>
+                      <div className={`mt-1 text-xs font-mono ${theme === 'dark' ? 'text-slate-300' : 'text-gray-700'}`}>
+                        Username: {item.username || "unknown"} | Port: {item.port || 22} | Status: {item.status || "success"}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
 
@@ -1198,6 +1778,18 @@ function VulnsPage({ scanData, theme }) {
   const openPorts = hosts.reduce((sum, h) => sum + (Array.isArray(h.open_ports) ? h.open_ports.length : 0), 0);
   const vulnerabilities = scanData?.vulnerability_summary?.total_vulnerabilities ?? 0;
   const critical = scanData?.vulnerability_summary?.critical_risk ?? 0;
+  const inventory = scanData?.asset_inventory || {};
+  const trafficAnalysis = scanData?.traffic_analysis || {};
+  const ticketExport = scanData?.ticket_export || {};
+  const inventorySubdomains = toArray(inventory.subdomains);
+  const inventoryServices = toArray(inventory.services);
+  const domainIntelligence = inventory.domain_intelligence || {};
+  const networkMap = inventory.network_map || {};
+  const protocolUsage = toArray(trafficAnalysis.protocol_usage);
+  const suspiciousTraffic = toArray(trafficAnalysis.suspicious_traffic);
+  const malwarePatterns = toArray(trafficAnalysis.malware_patterns);
+  const exportedTickets = toArray(ticketExport.tickets);
+  const scanProfile = scanData?.scan_profile || {};
 
   if (scanData?.error) {
     return (
@@ -1223,14 +1815,14 @@ function VulnsPage({ scanData, theme }) {
   }
 
   return (
-    <main className="w-full px-6 py-8">
+    <main className="relative z-10 w-full px-6 py-8 honeycomb-bg">
       {/* Query bar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3.5">
-          <span className="text-cyan-400 font-mono text-sm flex items-center gap-2">
-            <TerminalSvg size={14} color="#00e5ff" /> SCAN QUERY:
+          <span className="text-[var(--accent)] font-mono text-sm flex items-center gap-2">
+            <TerminalSvg size={14} color="var(--accent)" /> SCAN QUERY:
           </span>
-          <span className="px-3.5 py-1.5 rounded-lg border border-cyan-400/35 text-cyan-400 font-mono text-sm font-semibold tracking-wide">
+          <span className="px-3.5 py-1.5 rounded-lg border border-[rgba(107,31,58,0.2)] bg-[rgba(107,31,58,0.05)] text-[var(--accent)] font-mono text-sm font-semibold tracking-wide">
             Scanned Targets ({scanState})
           </span>
         </div>
@@ -1239,32 +1831,32 @@ function VulnsPage({ scanData, theme }) {
         </button> */}
       </div>
 
-      <h1 className="text-3xl font-bold text-cyan-400 font-mono tracking-wide mb-6">{hostsUp} host{hostsUp === 1 ? "" : "s"} discovered</h1>
+      <h1 className="text-3xl font-bold text-[var(--accent)] font-mono tracking-wide mb-6">{hostsUp} host{hostsUp === 1 ? "" : "s"} discovered</h1>
 
       {/* Stat Cards */}
       <div className="grid grid-cols-4 gap-3.5 mb-7">
-        <div className={`rounded-xl px-5 py-4 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-cyan-500/10 text-slate-200' : 'bg-white border-gray-200 text-gray-900'}`}>
+        <div className={`rounded-xl px-5 py-4 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-cyan-500/10 text-slate-200' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)] text-[var(--text)]'}`}>
           <div className={`flex items-center gap-1.5 text-[11px] font-bold tracking-widest mb-3 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={theme === 'dark' ? '#00e5ff' : '#0ea5e9'} strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={theme === 'dark' ? '#00e5ff' : '#6b1f3a'} strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
             HOSTS UP
           </div>
-          <div className={`${theme === 'dark' ? 'text-cyan-400' : 'text-blue-600'} text-4xl font-black font-mono`}>{hostsUp}</div>
+          <div className={`${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'} text-4xl font-black font-mono`}>{hostsUp}</div>
         </div>
-        <div className={`rounded-xl px-5 py-4 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-cyan-500/10 text-slate-200' : 'bg-white border-gray-200 text-gray-900'}`}>
+        <div className={`rounded-xl px-5 py-4 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-cyan-500/10 text-slate-200' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)] text-[var(--text)]'}`}>
           <div className={`flex items-center gap-1.5 text-[11px] font-bold tracking-widest mb-3 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={theme === 'dark' ? '#00e5ff' : '#0ea5e9'} strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={theme === 'dark' ? '#00e5ff' : '#6b1f3a'} strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
             OPEN PORTS
           </div>
           <div className={`${theme === 'dark' ? 'text-cyan-400' : 'text-green-600'} text-4xl font-black font-mono`}>{openPorts}</div>
         </div>
-        <div className={`rounded-xl px-5 py-4 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-amber-500/15 text-slate-200' : 'bg-white border-gray-200 text-gray-900'}`}>
+        <div className={`rounded-xl px-5 py-4 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-amber-500/15 text-slate-200' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)] text-[var(--text)]'}`}>
           <div className={`flex items-center gap-1.5 text-[11px] font-bold tracking-widest mb-3 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={theme === 'dark' ? '#f59e0b' : '#f59e0b'} strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
             VULNERABILITIES
           </div>
           <div className={`${theme === 'dark' ? 'text-amber-400' : 'text-orange-600'} text-4xl font-black font-mono`}>{vulnerabilities}</div>
         </div>
-        <div className={`rounded-xl px-5 py-4 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-red-500/15 text-slate-200' : 'bg-white border-gray-200 text-gray-900'}`}>
+        <div className={`rounded-xl px-5 py-4 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-red-500/15 text-slate-200' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)] text-[var(--text)]'}`}>
           <div className={`flex items-center gap-1.5 text-[11px] font-bold tracking-widest mb-3 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={theme === 'dark' ? '#ef4444' : '#ef4444'} strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
             CRITICAL RISK
@@ -1274,14 +1866,172 @@ function VulnsPage({ scanData, theme }) {
       </div>
 
       {/* Host Cards */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-7">
+        <div className={`rounded-xl p-5 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-cyan-500/10 text-slate-200' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)] text-[var(--text)]'}`}>
+          <SectionTitle>ASSET INVENTORY</SectionTitle>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>ASSETS</div>
+              <div className={`mt-1 text-2xl font-black font-mono ${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'}`}>{inventory.asset_count ?? hosts.length}</div>
+            </div>
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>SUBDOMAINS</div>
+              <div className={`mt-1 text-2xl font-black font-mono ${theme === 'dark' ? 'text-cyan-400' : 'text-[var(--accent)]'}`}>{inventorySubdomains.length}</div>
+            </div>
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>MAP NODES</div>
+              <div className={`mt-1 text-lg font-bold font-mono ${theme === 'dark' ? 'text-slate-200' : 'text-gray-900'}`}>{toArray(networkMap.nodes).length}</div>
+            </div>
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>MAP EDGES</div>
+              <div className={`mt-1 text-lg font-bold font-mono ${theme === 'dark' ? 'text-slate-200' : 'text-gray-900'}`}>{toArray(networkMap.edges).length}</div>
+            </div>
+          </div>
+          <div className={`text-[10px] font-bold tracking-widest mb-2 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>DISCOVERED SERVICES</div>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {inventoryServices.length === 0 ? (
+              <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No inventory services recorded.</span>
+            ) : (
+              inventoryServices.slice(0, 10).map((service) => (
+                <span key={service} className={`px-2.5 py-1 rounded-full text-xs font-mono border ${theme === 'dark' ? 'border-cyan-500/20 bg-cyan-500/[0.05] text-cyan-300' : 'border-[rgba(107,31,58,0.2)] bg-[rgba(107,31,58,0.05)] text-[var(--accent)]'}`}>
+                  {String(service).toUpperCase()}
+                </span>
+              ))
+            )}
+          </div>
+          <div className={`text-[10px] font-bold tracking-widest mb-2 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>SUBDOMAIN ENUMERATION</div>
+          <div className="space-y-2 max-h-44 overflow-auto pr-1">
+            {inventorySubdomains.length === 0 ? (
+                  <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No subdomains discovered. This usually means the target was an IP, DNS brute-force found nothing, or DNS resolution was blocked.</span>
+            ) : (
+              inventorySubdomains.slice(0, 8).map((item, index) => (
+                <div key={`${item?.subdomain || "subdomain"}-${index}`} className="flex items-center justify-between gap-3">
+                  <span className={`text-sm font-mono ${theme === 'dark' ? 'text-cyan-300' : 'text-[var(--accent)]'}`}>{item.subdomain}</span>
+                  <span className={`text-xs ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>{item.resolved_ip || "unresolved"}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className={`rounded-xl p-5 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-violet-500/10 text-slate-200' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)] text-[var(--text)]'}`}>
+          <SectionTitle color="bg-violet-400" textColor="text-violet-400">TRAFFIC ANALYSIS</SectionTitle>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>STATUS</div>
+              <div className={`mt-1 text-sm font-semibold ${trafficAnalysis.enabled ? 'text-emerald-400' : theme === 'dark' ? 'text-slate-300' : 'text-gray-700'}`}>
+                {trafficAnalysis.enabled ? "Enabled" : "Unavailable"}
+              </div>
+            </div>
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>DURATION</div>
+              <div className={`mt-1 text-sm font-semibold font-mono ${theme === 'dark' ? 'text-slate-200' : 'text-gray-900'}`}>{trafficAnalysis.duration_seconds ?? 0}s</div>
+            </div>
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>SUSPICIOUS</div>
+              <div className={`mt-1 text-lg font-bold font-mono ${theme === 'dark' ? 'text-amber-300' : 'text-amber-600'}`}>{suspiciousTraffic.length}</div>
+            </div>
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>MALWARE HITS</div>
+              <div className={`mt-1 text-lg font-bold font-mono ${theme === 'dark' ? 'text-red-300' : 'text-red-600'}`}>{malwarePatterns.length}</div>
+            </div>
+          </div>
+          <div className={`text-[10px] font-bold tracking-widest mb-2 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>PROTOCOL USAGE</div>
+          <div className="space-y-2 mb-4">
+            {protocolUsage.length === 0 ? (
+              <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>{trafficAnalysis.note || "No traffic telemetry captured. Scapy sniffing may be unavailable or no matching packets were seen during capture."}</span>
+            ) : (
+              protocolUsage.map((item, index) => (
+                <div key={`${item?.protocol || "protocol"}-${index}`} className="flex items-center justify-between gap-3">
+                  <span className={`text-sm font-mono ${theme === 'dark' ? 'text-violet-300' : 'text-violet-700'}`}>{item.protocol}</span>
+                  <span className={`text-xs font-mono ${theme === 'dark' ? 'text-slate-300' : 'text-gray-700'}`}>{item.count}</span>
+                </div>
+              ))
+            )}
+          </div>
+          <div className={`text-[10px] font-bold tracking-widest mb-2 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>SUSPICIOUS EVENTS</div>
+          <div className="space-y-2 max-h-44 overflow-auto pr-1">
+            {suspiciousTraffic.length === 0 ? (
+              <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No suspicious traffic events recorded.</span>
+            ) : (
+              suspiciousTraffic.slice(0, 6).map((item, index) => (
+                <div key={`${item?.src || "traffic"}-${index}`} className={`rounded-md px-3 py-2 border ${theme === 'dark' ? 'border-white/5 bg-white/[0.02]' : 'border-[rgba(26,26,46,0.12)] bg-[rgba(245,240,232,0.95)]'}`}>
+                  <div className={`text-sm ${theme === 'dark' ? 'text-slate-200' : 'text-[var(--text)]'}`}>{truncateText(item.detail, 70)}</div>
+                  <div className={`mt-1 text-xs font-mono ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>{item.src || "unknown"} {" -> "} {item.dst || "unknown"} {item.port ? `:${item.port}` : ""}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className={`rounded-xl p-5 border ${theme === 'dark' ? 'bg-[#0f1523]/90 border-amber-500/10 text-slate-200' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)] text-[var(--text)]'}`}>
+          <SectionTitle color="bg-amber-400" textColor="text-amber-400">EXPORT AND PROFILE</SectionTitle>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>TICKETS</div>
+              <div className={`mt-1 text-2xl font-black font-mono ${theme === 'dark' ? 'text-amber-300' : 'text-amber-600'}`}>{ticketExport.count ?? exportedTickets.length}</div>
+            </div>
+            <div>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>CREDENTIAL CHECK</div>
+              <div className={`mt-1 text-sm font-semibold ${scanProfile.include_credential_scan ? 'text-emerald-400' : theme === 'dark' ? 'text-slate-300' : 'text-gray-700'}`}>
+                {scanProfile.include_credential_scan ? "Enabled" : "Disabled"}
+              </div>
+            </div>
+          </div>
+          <div className={`text-[10px] font-bold tracking-widest mb-2 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>TICKET PREVIEW</div>
+          <div className="space-y-2 mb-4 max-h-44 overflow-auto pr-1">
+            {exportedTickets.length === 0 ? (
+              <span className={`${theme === 'dark' ? 'text-slate-400' : 'text-gray-600'} text-sm`}>No ticket export payload was generated.</span>
+            ) : (
+              exportedTickets.slice(0, 6).map((ticket, index) => (
+                <div key={`${ticket?.title || "ticket"}-${index}`} className={`rounded-md px-3 py-2 border ${theme === 'dark' ? 'border-white/5 bg-white/[0.02]' : 'border-[rgba(26,26,46,0.12)] bg-[rgba(245,240,232,0.95)]'}`}>
+                  <div className={`text-sm font-semibold ${theme === 'dark' ? 'text-slate-100' : 'text-[var(--text)]'}`}>{ticket.title || "Untitled finding"}</div>
+                  <div className={`mt-1 text-xs font-mono ${theme === 'dark' ? 'text-amber-300' : 'text-amber-700'}`}>{ticket.asset || "asset"} | {ticket.severity || "UNKNOWN"} | Score {ticket.priority_score ?? 0}</div>
+                </div>
+              ))
+            )}
+          </div>
+          <div className={`text-[10px] font-bold tracking-widest mb-2 ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>SCAN PROFILE</div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(scanProfile).map(([key, value]) => (
+              <span key={key} className={`px-2.5 py-1 rounded-full text-xs border ${theme === 'dark' ? 'border-slate-700 bg-slate-900/70 text-slate-300' : 'border-[rgba(26,26,46,0.12)] bg-[rgba(245,240,232,0.95)] text-[var(--text)]'}`}>
+                {formatLabel(key)}: {typeof value === "boolean" ? (value ? "On" : "Off") : String(value)}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className={`rounded-xl px-5 py-4 border mb-7 ${theme === 'dark' ? 'bg-[#0f1523]/90 border-cyan-500/10 text-slate-200' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)] text-[var(--text)]'}`}>
+        <SectionTitle>ADDITIONAL SCAN MODULES</SectionTitle>
+        <div className="flex flex-wrap gap-3">
+          {[
+            { label: "Subdomains", value: inventorySubdomains.length > 0 ? `${inventorySubdomains.length} discovered` : "No results" },
+            { label: "Traffic", value: trafficAnalysis.enabled ? `${protocolUsage.length} protocol groups` : "Unavailable" },
+            { label: "Tickets", value: (ticketExport.count ?? exportedTickets.length) > 0 ? `${ticketExport.count ?? exportedTickets.length} generated` : "No tickets" },
+            { label: "Credential checks", value: scanProfile.include_credential_scan ? "Enabled" : "Disabled" },
+          ].map((item) => (
+            <div key={item.label} className={`rounded-lg px-4 py-3 border min-w-[170px] ${theme === 'dark' ? 'bg-white/[0.02] border-white/5' : 'bg-[rgba(245,240,232,0.95)] border-[rgba(26,26,46,0.12)]'}`}>
+              <div className={`text-[10px] font-bold tracking-widest ${theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}>{item.label.toUpperCase()}</div>
+              <div className={`mt-1 text-sm font-semibold ${theme === 'dark' ? 'text-cyan-300' : 'text-[var(--accent)]'}`}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="flex flex-col gap-4">
-        {hosts.map((host, idx) => (
+        {hosts.map((host, idx) => {
+          const hostIp = host.resolved_ip || host.ip;
+          const relatedSubdomains = inventorySubdomains.filter((item) => item?.resolved_ip && item.resolved_ip === hostIp);
+          return (
           <HostCard
             key={host.ip || host.hostname || idx}
             theme={theme}
             host={{
               id: idx + 1,
               hostname: host.hostname || host.ip || "Unknown",
+              ip: host.resolved_ip || host.ip || "",
+              domain: host.domain || "",
               country: host.country || "NA",
               provider: host.vendor || "Unknown",
               vendor: host.vendor || "Unknown",
@@ -1293,22 +2043,35 @@ function VulnsPage({ scanData, theme }) {
               osDetection: host.os_name || host.os || "Unknown",
               vulnerabilities: Array.isArray(host.vulnerabilities) ? host.vulnerabilities.length : 0,
               vulnerabilityItems: Array.isArray(host.vulnerabilities) ? host.vulnerabilities : [],
-              ports: Array.isArray(host.open_ports),
               ports: Array.isArray(host.open_ports)
                 ? host.open_ports.map(p => ({ ...p, protocol: p.protocol || "tcp" }))
                 : (Array.isArray(host.ports) ? host.ports : []),
               insecureProtocols: host.insecure_protocols || host.insecureProtocols || [],
               tlsIssues: host.tls_issues || host.tlsIssues || [],
+              credentialScan: host.credential_scan || host.credentialScan || null,
+              riskSummary: host.risk_summary || host.riskSummary || null,
+              relatedSubdomains,
+              domainIntelligence,
+              defaultOpen: idx === 0,
             }}
           />
-        ))}
+          );
+        })}
       </div>
     </main>
   );
 }
 
 // ── App Root ──────────────────────────────────────────────────────────────────
-export default function VaptScanner({ onScanComplete, theme, previewMode = false, onRequireLogin }) {
+export default function VaptScanner({
+  onScanComplete,
+  theme,
+  previewMode = false,
+  onRequireLogin,
+  requestedScanTarget = null,
+  scanRequestNonce = 0,
+  onRequestedScanConsumed,
+}) {
   const [scanTarget, setScanTarget] = useState(() => {
     if (previewMode) return null;
     try {
@@ -1332,6 +2095,22 @@ export default function VaptScanner({ onScanComplete, theme, previewMode = false
       setPage("home");
     }
   }, [page, scanTarget]);
+
+  useEffect(() => {
+    if (previewMode) return;
+
+    const target = String(requestedScanTarget || "").trim();
+    if (!target) return;
+
+    setScanResult(null);
+    setScanTarget(target);
+    try {
+      localStorage.setItem(ACTIVE_SCAN_STORAGE_KEY, target);
+      localStorage.removeItem(ACTIVE_SCAN_META_STORAGE_KEY);
+    } catch {}
+    setPage("scan");
+    onRequestedScanConsumed?.();
+  }, [requestedScanTarget, scanRequestNonce, previewMode, onRequestedScanConsumed]);
 
   const handleScan = (t) => {
     if (previewMode) return;
@@ -1365,11 +2144,12 @@ export default function VaptScanner({ onScanComplete, theme, previewMode = false
   const visibleScanTarget = previewMode ? null : scanTarget;
 
   return (
-    <div className={`w-full ${theme === 'dark' ? 'bg-[#0a0d14] text-slate-200' : 'bg-gray-50 text-gray-900'}`} style={{ fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
-      <style>{`html,body,#root{background:${theme === 'dark' ? '#0a0d14' : '#f9fafb'};min-height:100vh;}`}</style>
+    <div className={`relative z-0 w-full ${theme === 'dark' ? 'bg-[#0a0d14] text-slate-200' : 'bg-[var(--bg)] text-[var(--text)]'}`} style={{ fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
+      <style>{`html,body,#root{background:${theme === 'dark' ? '#0a0d14' : 'var(--bg)'};min-height:100vh;}`}</style>
+      <BlobBg />
       {visiblePage === "home"  && <HomePage onScan={handleScan} theme={theme} previewMode={previewMode} onRequireLogin={onRequireLogin} />}
       {visibleScanTarget && (
-        <div className={visiblePage === "scan" ? "" : "hidden"}>
+        <div className={visiblePage === "scan" ? "relative z-10" : "hidden"}>
           <ScanPage target={visibleScanTarget} onScanComplete={handleScanComplete} onCancel={handleScanCancel} theme={theme} />
         </div>
       )}
@@ -1377,3 +2157,4 @@ export default function VaptScanner({ onScanComplete, theme, previewMode = false
     </div>
   );
 }
+

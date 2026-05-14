@@ -1,131 +1,281 @@
-import React from "react";
-import brandLogo from "../assets/STLOGO.png";
+import React, { useEffect, useRef, useState } from "react";
+import shadowLogo from "../assets/Shadow_logo2.png";
+import "./LandingPage.css";
 
-function MiniStat({ value, label }) {
+/* ── Blob canvas (same palette, calmer movement) ── */
+function BlobBg() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas.getContext("2d");
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+    const resize = () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; };
+    window.addEventListener("resize", resize);
+
+    const blobs = [
+      { x: W * 0.15, y: H * 0.3,  r: 380, color: "#1a1a2e", vx: 0.08, vy: 0.06 },
+      { x: W * 0.80, y: H * 0.65, r: 320, color: "#6b1f3a", vx: -0.07, vy: 0.09 },
+      { x: W * 0.50, y: H * 0.10, r: 220, color: "#e8d5c4", vx: 0.06, vy: -0.05 },
+      { x: W * 0.90, y: H * 0.10, r: 200, color: "#6b1f3a", vx: -0.05, vy: 0.08 },
+    ];
+
+    let raf;
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#f5f0e8";
+      ctx.fillRect(0, 0, W, H);
+      blobs.forEach(b => {
+        b.x += b.vx; b.y += b.vy;
+        if (b.x < -b.r) b.x = W + b.r; if (b.x > W + b.r) b.x = -b.r;
+        if (b.y < -b.r) b.y = H + b.r; if (b.y > H + b.r) b.y = -b.r;
+        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+        g.addColorStop(0, b.color + "40");
+        g.addColorStop(1, b.color + "00");
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+      });
+      // hex grid
+      ctx.strokeStyle = "rgba(26,26,46,0.04)";
+      ctx.lineWidth = 0.7;
+      const size = 42;
+      const rows = Math.ceil(H / (size * 1.73)) + 2;
+      const cols = Math.ceil(W / (size * 2)) + 2;
+      for (let r = -1; r < rows; r++) {
+        for (let c = -1; c < cols; c++) {
+          const cx = c * size * 2 + (r % 2) * size + size;
+          const cy = r * size * 1.73 + size;
+          ctx.beginPath();
+          for (let a = 0; a < 6; a++) {
+            const angle = (Math.PI / 3) * a - Math.PI / 6;
+            const px = cx + size * 0.88 * Math.cos(angle);
+            const py = cy + size * 0.88 * Math.sin(angle);
+            a === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+          }
+          ctx.closePath(); ctx.stroke();
+        }
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+  }, []);
+  return <canvas ref={ref} className="landing-blob-canvas" />;
+}
+
+/* ── Typewriter cycling headline ── */
+const THREATS = [
+  "SQL Injections.",
+  "Zero-Day Exploits.",
+  "Exposed Credentials.",
+];
+
+function CyclingTypewriter() {
+  const [index, setIndex] = useState(0);
+  const [displayed, setDisplayed] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    const word = THREATS[index];
+    if (!deleting) {
+      if (displayed.length < word.length) {
+        const t = setTimeout(() => setDisplayed(word.slice(0, displayed.length + 1)), 65);
+        return () => clearTimeout(t);
+      } else {
+        const t = setTimeout(() => setDeleting(true), 1800);
+        return () => clearTimeout(t);
+      }
+    } else {
+      if (displayed.length > 0) {
+        const t = setTimeout(() => setDisplayed(displayed.slice(0, -1)), 38);
+        return () => clearTimeout(t);
+      } else {
+        setDeleting(false);
+        setIndex(i => (i + 1) % THREATS.length);
+      }
+    }
+  }, [displayed, deleting, index]);
+
   return (
-    <div className="rounded-[22px] border border-[#e3edf6] bg-[#fbfdff] px-5 py-4">
-      <div className="text-2xl font-semibold tracking-[-0.04em] text-slate-950">{value}</div>
-      <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">{label}</div>
+    <span className="cycling-word">
+      {displayed}<span className="tw-cursor">|</span>
+    </span>
+  );
+}
+
+/* ── Count-up ── */
+function CountUp({ target, suffix, prefix = "" }) {
+  const [val, setVal] = useState(0);
+  const ref = useRef(null);
+  useEffect(() => {
+    const obs = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      obs.disconnect();
+      let start = 0;
+      const step = Math.ceil(target / 70);
+      const id = setInterval(() => {
+        start += step;
+        if (start >= target) { setVal(target); clearInterval(id); }
+        else setVal(start);
+      }, 20);
+    }, { threshold: 0.4 });
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, [target]);
+  return <span ref={ref}>{prefix}{val.toLocaleString()}{suffix}</span>;
+}
+
+/* ── Feature card ── */
+function FeatureCard({ number, title, desc, detail }) {
+  return (
+    <div className="feat-card">
+      <span className="feat-num">{number}</span>
+      <div className="feat-divider" />
+      <h3 className="feat-title">{title}</h3>
+      <p className="feat-desc">{desc}</p>
+      <p className="feat-detail">{detail}</p>
     </div>
   );
 }
 
 export default function LandingPage({ onEnter, onGoAuth }) {
   return (
-    <div className="min-h-screen overflow-hidden bg-white text-slate-900">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-[-8%] top-[-10%] h-[420px] w-[420px] rounded-full bg-sky-100/60 blur-[110px]" />
-        <div className="absolute right-[-8%] top-[12%] h-[420px] w-[420px] rounded-full bg-cyan-100/55 blur-[120px]" />
-        <div
-          className="absolute inset-0 opacity-[0.22]"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(148,163,184,0.14) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.14) 1px, transparent 1px)",
-            backgroundSize: "90px 90px",
-            maskImage: "linear-gradient(180deg, rgba(0,0,0,0.8), rgba(0,0,0,0.12))",
-          }}
-        />
-      </div>
+    <div className="landing landing-visible">
+      <BlobBg />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-[1320px] flex-col px-6 py-8 sm:px-8 lg:px-10">
-        <header className="flex items-center justify-between">
-          <img src={brandLogo} alt="ShadowTrace" className="h-12 w-auto object-contain sm:h-14" />
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onGoAuth}
-              className="rounded-full border border-[#d7e5f1] bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-sky-300 hover:text-sky-700"
-            >
-              Login
-            </button>
-            <button
-              onClick={onGoAuth}
-              className="rounded-full bg-[linear-gradient(135deg,#0284c7,#2563eb)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_14px_28px_rgba(37,99,235,0.22)] transition hover:-translate-y-0.5"
-            >
-              Sign up
-            </button>
+      <nav className="nav">
+        <div className="nav-brand">
+          <div>
+            <img src={shadowLogo} alt="ShadowTrace" className="brand-icon" />
           </div>
-        </header>
+        </div>
+        <button className="btn-login" onClick={onGoAuth}>Login →</button>
+      </nav>
 
-        <main className="flex flex-1 items-center justify-center py-10">
-          <div className="grid w-full items-center gap-12 lg:grid-cols-[1.02fr_0.98fr]">
-            <section className="max-w-[620px]">
-              <div className="inline-flex items-center gap-2 rounded-full border border-[#dce8f3] bg-[#f7fbff] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                Security workspace
-              </div>
-
-              <h1 className="mt-8 text-5xl font-semibold leading-[0.96] tracking-[-0.06em] text-slate-950 sm:text-6xl lg:text-[72px]">
-                Clean vulnerability scanning,
-                <span className="block text-sky-700">built to stay readable.</span>
-              </h1>
-
-              <p className="mt-6 max-w-[560px] text-lg leading-8 text-slate-600">
-                ShadowTrace gives you a simple way to launch scans, review exposure, and generate reports without clutter or heavy visual noise.
-              </p>
-
-              <div className="mt-10 flex flex-col gap-4 sm:flex-row">
-                <button
-                  onClick={onGoAuth}
-                  className="rounded-[22px] bg-[linear-gradient(135deg,#0284c7,#2563eb)] px-7 py-4 text-sm font-semibold uppercase tracking-[0.16em] text-white shadow-[0_18px_34px_rgba(37,99,235,0.22)] transition hover:-translate-y-0.5"
-                >
-                  Open account access
-                </button>
-                <button
-                  onClick={onEnter}
-                  className="rounded-[22px] border border-[#d7e5f1] bg-white px-7 py-4 text-sm font-semibold uppercase tracking-[0.16em] text-slate-700 transition hover:border-sky-300 hover:text-sky-700"
-                >
-                  Preview scanner
-                </button>
-              </div>
-
-              <div className="mt-10 grid gap-4 sm:grid-cols-3">
-                <MiniStat value="Fast" label="scan flow" />
-                <MiniStat value="Clear" label="risk review" />
-                <MiniStat value="PDF" label="report export" />
-              </div>
-            </section>
-
-            <section className="flex justify-center lg:justify-end">
-              <div className="w-full max-w-[520px] rounded-[32px] border border-[#dfeaf4] bg-[#fbfdff] p-6 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
-                <div className="rounded-[26px] border border-[#e5edf6] bg-white p-5">
-                  <div className="flex items-center justify-between gap-4 border-b border-[#edf3f8] pb-4">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Live scanner snapshot</div>
-                      <div className="mt-2 text-xl font-semibold text-slate-950">Exposure overview</div>
-                    </div>
-                    <div className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                      active
-                    </div>
-                  </div>
-
-                  <div className="mt-5 space-y-4">
-                    {[
-                      ["Target", "192.168.1.0/24"],
-                      ["Open services", "42 detected"],
-                      ["Priority findings", "9 high severity"],
-                    ].map(([label, value]) => (
-                      <div key={label} className="rounded-[20px] bg-[#f4f8fc] px-4 py-4">
-                        <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
-                        <div className="mt-2 text-lg font-semibold text-slate-900">{value}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-5 rounded-[22px] bg-[linear-gradient(135deg,#eff6ff,#f8fbff)] px-5 py-5">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-700">Why it feels better</div>
-                    <div className="mt-3 space-y-3 text-sm leading-7 text-slate-600">
-                      <p>Focused scan entry.</p>
-                      <p>Clean white layout for long review sessions.</p>
-                      <p>Simple path from login to findings and reports.</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
+      <section className="hero">
+        <div className="hero-inner">
+          <div className="hero-badge">
+            <span className="badge-pip" />
+            Powered by Kristellar Cyberspace
           </div>
-        </main>
-      </div>
+
+          <h1 className="hero-h1">
+            We Find <br />
+            <CyclingTypewriter />
+            <br />
+            <span className="hero-h1-sub">Before Attackers Do.</span>
+          </h1>
+
+          <p className="hero-p">
+            VulnScan AI continuously scans your infrastructure, APIs, and codebase —
+            surfacing critical vulnerabilities with full CVSS scoring and
+            actionable remediation in real time.
+          </p>
+
+          <div className="hero-actions">
+            <button className="btn-primary" onClick={onEnter}>Request Early Access</button>
+            <button className="btn-text" onClick={(e) => e.preventDefault()}>See How It Works ↓</button>
+          </div>
+
+          <div className="scan-bar-wrap">
+            <div className="scan-bar-track">
+              <div className="scan-bar-fill" />
+            </div>
+            <span className="scan-bar-label">CONTINUOUS SCAN ACTIVE</span>
+          </div>
+        </div>
+
+        <div className="hero-card">
+          <div className="hcard-header">
+            <span className="hcard-dot red" /><span className="hcard-dot yellow" /><span className="hcard-dot green" />
+            <span className="hcard-title">threat-report.log</span>
+          </div>
+          <div className="hcard-body">
+            {[
+              { sev: "CRIT", msg: "RCE vector — port 8443", color: "#6b1f3a" },
+              { sev: "HIGH", msg: "SQLi found — /api/users", color: "#c0622a" },
+              { sev: "HIGH", msg: "CVE-2024-3400 matched", color: "#c0622a" },
+              { sev: "MED",  msg: "TLS 1.0 still active",  color: "#d4a853" },
+              { sev: "LOW",  msg: "Missing X-Frame header", color: "#8a7a6a" },
+            ].map(({ sev, msg, color }) => (
+              <div className="hcard-row" key={msg}>
+                <span className="hcard-sev" style={{ color }}>{sev}</span>
+                <span className="hcard-msg">{msg}</span>
+              </div>
+            ))}
+          </div>
+          <div className="hcard-footer">
+            <span>5 findings · 2 critical</span>
+            <span className="hcard-status">● Live</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="stats">
+        {[
+          { n: 2400000, suf: "+", pre: "", label: "Scans Per Month" },
+          { n: 99,      suf: ".7%", pre: "", label: "Detection Rate" },
+          { n: 340,     suf: "ms",  pre: "<", label: "Avg. Response Time" },
+          { n: 12000,   suf: "+",  pre: "", label: "CVEs Tracked" },
+        ].map(({ n, suf, pre, label }) => (
+          <div className="stat-block" key={label}>
+            <span className="stat-num"><CountUp target={n} suffix={suf} prefix={pre} /></span>
+            <span className="stat-label">{label}</span>
+            <div className="stat-line" />
+          </div>
+        ))}
+      </section>
+
+      <section className="features">
+        <div className="features-header">
+          <span className="section-tag">// CORE CAPABILITIES</span>
+          <h2 className="section-h2">Built for Modern <br /><em>Security Teams</em></h2>
+        </div>
+        <div className="feat-grid">
+          <FeatureCard
+            number="01"
+            title="Neural Threat Detection"
+            desc="Our AI model analyzes traffic patterns, dependency trees, and code paths to surface zero-days missed by signature scanners."
+            detail="Covers OWASP Top 10, CVE library, and custom rule sets."
+          />
+          <FeatureCard
+            number="02"
+            title="Continuous Attack Surface Monitoring"
+            desc="Live inventory of exposed ports, subdomains, APIs, and cloud assets. Instant alerts the moment a new vector appears."
+            detail="Integrates with AWS, GCP, Azure, and on-premise infrastructure."
+          />
+          <FeatureCard
+            number="03"
+            title="Instant Remediation Intelligence"
+            desc="Every finding ships with a CVSS score, exploit probability, and AI-generated fix guidance tailored to your exact stack."
+            detail="Auto-generate PRs to GitHub or GitLab with one click."
+          />
+        </div>
+      </section>
+
+      <section className="cta-section">
+        <div className="cta-inner">
+          <span className="section-tag">// GET STARTED</span>
+          <h2 className="cta-h2">Your Infrastructure Has <br /><em>Vulnerabilities Right Now.</em></h2>
+          <p className="cta-p">Join the waitlist. Be first to secure your stack with VulnScan AI.</p>
+          <form className="cta-form" onSubmit={(e) => { e.preventDefault(); onEnter(); }}>
+            <input type="email" placeholder="your@company.com" className="cta-input" />
+            <button type="submit" className="btn-primary">Join Waitlist</button>
+          </form>
+          <p className="cta-fine">No credit card. No commitment. Early access only.</p>
+        </div>
+        <div className="cta-deco">
+          <div className="deco-ring r1" />
+          <div className="deco-ring r2" />
+          <div className="deco-ring r3" />
+          <span className="deco-label">SCANNING</span>
+        </div>
+      </section>
+
+      <footer className="mini-footer">
+        <span>© 2025 Kristellar Cyberspace Private Limited. All rights reserved.</span>
+        <span className="footer-pip"><span className="badge-pip sm" /> Systems Operational</span>
+      </footer>
     </div>
   );
 }

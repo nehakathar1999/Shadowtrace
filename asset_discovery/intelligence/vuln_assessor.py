@@ -14,6 +14,8 @@ VULN_DB = [
         "service": "http",
         "product": "Apache httpd",
         "version": "2.4.59",
+        "cwe_ids": ["CWE-400"],
+        "weakness_summary": "CWE-400: Uncontrolled Resource Consumption",
         "severity": "HIGH",
         "cvss_score": 7.5,
         "title": "HTTP/2 Rapid Reset Attack",
@@ -34,6 +36,8 @@ VULN_DB = [
         "service": "http",
         "product": "Apache httpd",
         "version": "2.4.49",
+        "cwe_ids": ["CWE-22"],
+        "weakness_summary": "CWE-22: Improper Limitation of a Pathname to a Restricted Directory",
         "severity": "HIGH",
         "cvss_score": 7.5,
         "title": "Path traversal and file disclosure",
@@ -55,6 +59,8 @@ PORT_CVE_HINTS = {
         "cve": "CVE-2018-15473",
         "service": "ssh",
         "product": "OpenSSH",
+        "cwe_ids": ["CWE-203"],
+        "weakness_summary": "CWE-203: Observable Discrepancy",
         "severity": "MEDIUM",
         "cvss_score": 5.3,
         "title": "OpenSSH Username Enumeration",
@@ -64,6 +70,8 @@ PORT_CVE_HINTS = {
         "cve": "CVE-2021-41773",
         "service": "http",
         "product": "Apache httpd",
+        "cwe_ids": ["CWE-22"],
+        "weakness_summary": "CWE-22: Improper Limitation of a Pathname to a Restricted Directory",
         "severity": "HIGH",
         "cvss_score": 7.5,
         "title": "Apache Path Traversal and File Disclosure",
@@ -91,6 +99,8 @@ PORT_CVE_HINTS = {
         "cve": "CVE-2012-2122",
         "service": "mysql",
         "product": "MySQL",
+        "cwe_ids": ["CWE-287"],
+        "weakness_summary": "CWE-287: Improper Authentication",
         "severity": "HIGH",
         "cvss_score": 6.5,
         "title": "MySQL Authentication Bypass",
@@ -109,6 +119,8 @@ PORT_CVE_HINTS = {
         "cve": "CVE-2018-1058",
         "service": "postgresql",
         "product": "PostgreSQL",
+        "cwe_ids": ["CWE-269"],
+        "weakness_summary": "CWE-269: Improper Privilege Management",
         "severity": "MEDIUM",
         "cvss_score": 6.5,
         "title": "PostgreSQL search_path Privilege Escalation",
@@ -136,6 +148,8 @@ PORT_CVE_HINTS = {
         "cve": "CVE-2020-1938",
         "service": "http",
         "product": "Apache Tomcat",
+        "cwe_ids": ["CWE-22"],
+        "weakness_summary": "CWE-22: Improper Limitation of a Pathname to a Restricted Directory",
         "severity": "CRITICAL",
         "cvss_score": 9.8,
         "title": "Tomcat AJP / Ghostcat File Read / Inclusion",
@@ -145,6 +159,7 @@ PORT_CVE_HINTS = {
 
 PORT_RISK_HINTS = {
     445: {
+        "cve": "CVE-2017-0144",
         "service": "smb",
         "product": "SMB",
         "severity": "HIGH",
@@ -159,6 +174,16 @@ SEVERITY_TO_CVSS = {
     "HIGH": 8.1,
     "MEDIUM": 5.5,
     "LOW": 3.1,
+}
+
+
+LOCAL_CWE_MAP = {
+    "CVE-2012-2122": (["CWE-287"], "CWE-287: Improper Authentication"),
+    "CVE-2018-1058": (["CWE-269"], "CWE-269: Improper Privilege Management"),
+    "CVE-2018-15473": (["CWE-203"], "CWE-203: Observable Discrepancy"),
+    "CVE-2020-1938": (["CWE-22"], "CWE-22: Improper Limitation of a Pathname to a Restricted Directory"),
+    "CVE-2021-41773": (["CWE-22"], "CWE-22: Improper Limitation of a Pathname to a Restricted Directory"),
+    "CVE-2023-44487": (["CWE-400"], "CWE-400: Uncontrolled Resource Consumption"),
 }
 
 
@@ -184,6 +209,31 @@ def _append_unique(findings, candidate):
 
 def _default_remediation(service, product, version, title=""):
     return remediation_plan(service, product, version, title)
+
+
+def _extract_cwe_ids(text: str) -> list[str]:
+    tokens = []
+    for raw in str(text or "").replace(",", " ").split():
+        value = raw.strip().upper().rstrip(".:);")
+        if value.startswith("CWE-"):
+            if value not in tokens:
+                tokens.append(value)
+    return tokens
+
+
+def _local_weakness_metadata(cve_id: str | None = None, *texts: str) -> tuple[list[str], str]:
+    cve_key = str(cve_id or "").strip().upper()
+    if cve_key in LOCAL_CWE_MAP:
+        return LOCAL_CWE_MAP[cve_key]
+
+    collected = []
+    for text in texts:
+        for cwe_id in _extract_cwe_ids(text):
+            if cwe_id not in collected:
+                collected.append(cwe_id)
+
+    summary = f"Mapped weakness identifiers: {', '.join(collected)}" if collected else ""
+    return collected, summary
 
 
 def _service_matches(vuln, svc_name, product):
@@ -232,6 +282,12 @@ def _build_infra_evidence(svc, *, matched_by: str, direct_proof: bool, note: str
 
 def _build_matched_finding(svc, vuln):
     direct_proof = _version_matches(vuln.get("version"), svc.get("version"))
+    cwe_ids, weakness_summary = _local_weakness_metadata(
+        vuln.get("cve"),
+        vuln.get("title"),
+        vuln.get("description"),
+        vuln.get("weakness_summary"),
+    )
     evidence = _build_infra_evidence(
         svc,
         matched_by="version-and-product match",
@@ -249,6 +305,8 @@ def _build_matched_finding(svc, vuln):
             "cvss_score": vuln.get("cvss_score", SEVERITY_TO_CVSS.get(vuln["severity"])),
             "title": vuln["title"],
             "description": vuln["description"],
+            "cwe_ids": cwe_ids or vuln.get("cwe_ids") or [],
+            "weakness_summary": weakness_summary or vuln.get("weakness_summary") or "",
             "remediation": vuln.get("remediation") or _default_remediation(svc.get("service"), svc.get("product"), svc.get("version"), vuln["title"]),
         },
         validation="confirmed" if direct_proof else "validated_version",
@@ -284,6 +342,12 @@ def _build_port_based_finding(svc):
         direct_proof=False,
         note=note,
     )
+    cwe_ids, weakness_summary = _local_weakness_metadata(
+        hint.get("cve"),
+        hint.get("title"),
+        hint.get("description"),
+        hint.get("weakness_summary"),
+    )
 
     return enrich_finding(
         {
@@ -296,6 +360,8 @@ def _build_port_based_finding(svc):
             "cvss_score": hint.get("cvss_score"),
             "title": hint["title"],
             "description": hint["description"],
+            "cwe_ids": cwe_ids or hint.get("cwe_ids") or [],
+            "weakness_summary": weakness_summary or hint.get("weakness_summary") or "",
             "remediation": hint.get("remediation") or _default_remediation(service_name, product_name, version, hint["title"]),
         },
         validation=validation,
@@ -314,6 +380,67 @@ def _service_script_text(svc) -> str:
         else:
             script_chunks.append(str(script))
     return " ".join(script_chunks).lower()
+
+
+def _build_script_finding(svc, script_id: str, output: str):
+    output_text = str(output or "").strip()
+    lowered = output_text.lower()
+    severity = "MEDIUM"
+    score = 5.5
+    if any(term in lowered for term in ("critical", "remote code execution", "rce")):
+        severity = "CRITICAL"
+        score = 9.5
+    elif any(term in lowered for term in ("high", "vulnerable", "cve-")):
+        severity = "HIGH"
+        score = 8.1
+
+    cve_match = None
+    for token in output_text.replace(",", " ").split():
+        token_upper = token.strip().upper().rstrip(".:")
+        if token_upper.startswith("CVE-"):
+            cve_match = token_upper
+            break
+    cwe_ids, weakness_summary = _local_weakness_metadata(cve_match, script_id, output_text)
+
+    evidence = _build_infra_evidence(
+        svc,
+        matched_by="nmap-nse-signature",
+        direct_proof="vulnerable" in lowered or bool(cve_match),
+        note=f"NSE script {script_id} reported: {output_text[:180]}",
+    )
+    return enrich_finding(
+        {
+            "port": svc.get("port"),
+            "service": (svc.get("service") or "unknown").lower(),
+            "product": svc.get("product") or "",
+            "version": svc.get("version") or "",
+            "cve": cve_match,
+            "severity": severity,
+            "cvss_score": score,
+            "title": f"Nmap NSE detection: {script_id}",
+            "description": output_text or f"NSE script {script_id} reported a vulnerability indication.",
+            "cwe_ids": cwe_ids,
+            "weakness_summary": weakness_summary,
+            "remediation": _default_remediation(svc.get("service"), svc.get("product"), svc.get("version"), script_id),
+        },
+        validation="confirmed" if "vulnerable" in lowered else "validated_version",
+        confidence_score=90 if "vulnerable" in lowered else 76,
+        evidence=evidence,
+        source="nmap_vuln_script",
+    )
+
+
+def _findings_from_scripts(svc):
+    findings = []
+    for script in svc.get("scripts") or []:
+        script_id = str(script.get("id") or "").strip()
+        output = str(script.get("output") or "").strip()
+        if not script_id or not output:
+            continue
+        lowered = output.lower()
+        if script_id.startswith("vuln") or "vulnerable" in lowered or "cve-" in lowered:
+            findings.append(_build_script_finding(svc, script_id, output))
+    return findings
 
 
 def _service_indicates_smbv1(svc) -> bool:
@@ -349,7 +476,7 @@ def _build_generic_port_risk_finding(svc):
             "service": service_name,
             "product": product_name,
             "version": version,
-            "cve": None,
+            "cve": hint.get("cve"),
             "severity": hint["severity"],
             "cvss_score": hint.get("cvss_score"),
             "title": hint["title"],
@@ -363,6 +490,73 @@ def _build_generic_port_risk_finding(svc):
     )
 
 
+def _collect_nvd_weaknesses(item):
+    cwe_ids = []
+    weakness_labels = []
+
+    # NVD 2.0 format
+    weakness_blocks = item.get("cve", {}).get("weaknesses", []) or []
+    for block in weakness_blocks:
+        for desc in block.get("description", []) or []:
+            value = str(desc.get("value") or "").strip()
+            if not value:
+                continue
+            value_upper = value.upper()
+            if value_upper.startswith("CWE-") and value_upper not in cwe_ids:
+                cwe_ids.append(value_upper)
+            if value not in weakness_labels:
+                weakness_labels.append(value)
+
+    # Legacy NVD 1.0 format
+    legacy_problemtypes = item.get("cve", {}).get("problemtype", {}).get("problemtype_data", []) or []
+    for block in legacy_problemtypes:
+        for desc in block.get("description", []) or []:
+            value = str(desc.get("value") or "").strip()
+            if not value:
+                continue
+            value_upper = value.upper()
+            if value_upper.startswith("CWE-") and value_upper not in cwe_ids:
+                cwe_ids.append(value_upper)
+            if value not in weakness_labels:
+                weakness_labels.append(value)
+
+    filtered_labels = [
+        value for value in weakness_labels
+        if value.upper() not in {"NVD-CWE-NOINFO", "NVD-CWE-OTHER"}
+    ]
+    summary = ", ".join(filtered_labels[:3]) if filtered_labels else ""
+    return cwe_ids, summary
+
+
+def _extract_nvd_severity_and_score(item):
+    cve_payload = item.get("cve", {})
+    metrics = cve_payload.get("metrics") or {}
+    impact = item.get("impact", {})
+
+    metric_sets = [
+        metrics.get("cvssMetricV31"),
+        metrics.get("cvssMetricV30"),
+        metrics.get("cvssMetricV2"),
+    ]
+    for metric_list in metric_sets:
+        if not metric_list:
+            continue
+        metric = metric_list[0] or {}
+        cvss = metric.get("cvssData") or metric.get("cvssV2") or {}
+        severity = metric.get("baseSeverity") or cvss.get("baseSeverity") or metric.get("severity")
+        score = cvss.get("baseScore")
+        if severity or score is not None:
+            return (severity or "UNKNOWN"), score
+
+    if impact.get("baseMetricV3"):
+        cvss = impact["baseMetricV3"].get("cvssV3", {})
+        return cvss.get("baseSeverity", "UNKNOWN"), cvss.get("baseScore")
+    if impact.get("baseMetricV2"):
+        cvss = impact["baseMetricV2"].get("cvssV2", {})
+        return impact["baseMetricV2"].get("severity", "UNKNOWN"), cvss.get("baseScore")
+    return "UNKNOWN", None
+
+
 def fetch_cves_from_nvd(product, version):
     if requests is None:
         return []
@@ -371,7 +565,7 @@ def fetch_cves_from_nvd(product, version):
     if not q:
         return []
 
-    url = "https://services.nvd.nist.gov/rest/json/cves/1.0"
+    url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     params = {"keyword": q, "resultsPerPage": 10}
 
     try:
@@ -380,25 +574,20 @@ def fetch_cves_from_nvd(product, version):
         body = resp.json()
 
         results = []
-        for item in body.get("result", {}).get("CVE_Items", []):
-            meta = item.get("cve", {}).get("CVE_data_meta", {})
-            cve_id = meta.get("ID")
+        for item in body.get("vulnerabilities", []) or body.get("result", {}).get("CVE_Items", []):
+            cve_payload = item.get("cve", {})
+            meta = cve_payload.get("CVE_data_meta", {})
+            cve_id = cve_payload.get("id") or meta.get("ID")
             desc = ""
-            desc_list = item.get("cve", {}).get("description", {}).get("description_data", [])
+            desc_list = cve_payload.get("descriptions") or cve_payload.get("description", {}).get("description_data", [])
             if desc_list:
-                desc = desc_list[0].get("value", "")
+                desc = next((entry.get("value", "") for entry in desc_list if entry.get("lang", "en") == "en"), desc_list[0].get("value", ""))
 
-            impact = item.get("impact", {})
-            severity = "UNKNOWN"
-            if impact.get("baseMetricV3"):
-                severity = impact["baseMetricV3"].get("cvssV3", {}).get("baseSeverity", "UNKNOWN")
-                score = impact["baseMetricV3"].get("cvssV3", {}).get("baseScore")
-            elif impact.get("baseMetricV2"):
-                severity = impact["baseMetricV2"].get("severity", "UNKNOWN")
-                score = impact["baseMetricV2"].get("cvssV2", {}).get("baseScore")
-            else:
+            severity, score = _extract_nvd_severity_and_score(item)
+            if score is None:
                 score = SEVERITY_TO_CVSS.get(severity)
 
+            cwe_ids, weakness_summary = _collect_nvd_weaknesses(item)
             evidence = make_evidence(
                 observed=[f"NVD keyword lookup matched product query: {product} {version}"],
                 request={"query": q, "endpoint": url},
@@ -415,6 +604,8 @@ def fetch_cves_from_nvd(product, version):
                         "description": desc,
                         "product": product,
                         "version": version,
+                        "cwe_ids": cwe_ids,
+                        "weakness_summary": weakness_summary,
                         "remediation": _default_remediation("", product, version, desc),
                     },
                     validation="validated_version" if version else "hypothesis",
@@ -436,6 +627,9 @@ def assess_vulnerabilities(services):
         svc_name = (svc.get("service") or "").lower()
         product = (svc.get("product") or "").lower()
         version = (svc.get("version") or "").lower()
+
+        for script_finding in _findings_from_scripts(svc):
+            _append_unique(findings, script_finding)
 
         for vuln in VULN_DB:
             if _service_matches(vuln, svc_name, product) and _version_matches(vuln["version"], version):

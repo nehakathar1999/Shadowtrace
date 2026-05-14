@@ -4,48 +4,62 @@ import Vulns from "./Pages/Vulns"
 import Stats from "./Pages/Stats"
 import Navbar from "./Pages/Navbar"
 import AuthPage from "./Pages/AuthPage"
+import LandingPage from "./Pages/LandingPage"
+import IntroSequence from "./IntroSequence"
+import { API_BASE } from "./lib/api"
 
 const AUTH_STORAGE_KEY = "vapt_scanner_auth_user"
+const ACTIVE_NAV_STORAGE_KEY = "vapt_scanner_active_nav"
+
+const readStoredAuthUser = () => {
+  try {
+    const stored = localStorage.getItem(AUTH_STORAGE_KEY)
+    if (!stored) return null
+    const parsed = JSON.parse(stored)
+    return parsed?.email ? parsed : null
+  } catch {
+    return null
+  }
+}
 
 function App() {
-  const DEFAULT_API_HOST = `${window.location.protocol}//${window.location.hostname}:8000`
-  const API_BASE = (import.meta.env.VITE_API_URL || DEFAULT_API_HOST).replace(/\/+$/, "")
-  const [activeNav, setActiveNav] = useState("Scan")
+  const initialAuthUser = (() => {
+    if (typeof window === "undefined") return null
+    return readStoredAuthUser()
+  })()
+
+  const [activeNav, setActiveNav] = useState(() => {
+    if (typeof window === "undefined") return "Scan"
+    return localStorage.getItem(ACTIVE_NAV_STORAGE_KEY) || "Scan"
+  })
   const [scanData, setScanData] = useState(null)
   const [selectedTarget, setSelectedTarget] = useState(null)
-  const [theme, setTheme] = useState('light')
-  const [authUser, setAuthUser] = useState(() => {
-    try {
-      const stored = localStorage.getItem(AUTH_STORAGE_KEY)
-      return stored ? JSON.parse(stored) : null
-    } catch {
-      return null
-    }
-  })
-  const [entryStage, setEntryStage] = useState(() => {
-    try {
-      const stored = localStorage.getItem(AUTH_STORAGE_KEY)
-      return stored ? "app" : "auth"
-    } catch {
-      return "auth"
-    }
-  })
-  const [previewMode, setPreviewMode] = useState(() => {
-    try {
-      const stored = localStorage.getItem(AUTH_STORAGE_KEY)
-      return !stored
-    } catch {
-      return true
-    }
-  })
+  const [requestedScanTarget, setRequestedScanTarget] = useState(null)
+  const [scanRequestNonce, setScanRequestNonce] = useState(0)
+  const [vulnsResetNonce, setVulnsResetNonce] = useState(0)
+  const theme = 'light'
+  const [authUser, setAuthUser] = useState(initialAuthUser)
+  const [entryStage, setEntryStage] = useState("intro")
+
+  const normalizeTargetValue = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\\/]+/g, "-")
+
+  const clearCurrentScanView = () => {
+    setSelectedTarget(null)
+    setScanData(null)
+    setVulnsResetNonce((prev) => prev + 1)
+  }
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-  }, [theme])
-
-  const toggleTheme = () => {
-    setTheme(theme === 'light' ? 'dark' : 'light')
-  }
+    try {
+      localStorage.setItem(ACTIVE_NAV_STORAGE_KEY, activeNav)
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [activeNav])
 
   const onScanComplete = (data) => {
     setScanData(data)
@@ -55,9 +69,9 @@ function App() {
 
   const handleAuthSuccess = (user) => {
     setAuthUser(user)
-    setPreviewMode(false)
     setEntryStage("app")
     setActiveNav("Scan")
+    setRequestedScanTarget(null)
     try {
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user))
     } catch {
@@ -67,12 +81,14 @@ function App() {
 
   const handleLogout = () => {
     setAuthUser(null)
-    setPreviewMode(false)
-    setEntryStage("auth")
+    setEntryStage("intro")
     setActiveNav("Scan")
-    setSelectedTarget(null)
+    clearCurrentScanView()
+    setRequestedScanTarget(null)
+    setScanRequestNonce(0)
     try {
       localStorage.removeItem(AUTH_STORAGE_KEY)
+      localStorage.removeItem(ACTIVE_NAV_STORAGE_KEY)
     } catch {
       // Ignore storage cleanup failures.
     }
@@ -102,24 +118,79 @@ function App() {
     }
   }
 
-  // Landing page is temporarily disabled so the app opens directly on auth.
-  // if (entryStage === "landing") {
-  //   return (
-  //     <LandingPage
-  //       onEnter={() => {
-  //         setPreviewMode(true)
-  //         setEntryStage("app")
-  //         setActiveNav("Scan")
-  //       }}
-  //       onGoAuth={() => setEntryStage("auth")}
-  //     />
-  //   )
-  // }
+  const onHistoryDelete = async (entry) => {
+    if (!entry?.reportPath) return false
+
+    try {
+      const response = await fetch(`${API_BASE}/reports?path=${encodeURIComponent(entry.reportPath)}`, {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+      })
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data?.detail || `Failed to delete scan history (${response.status})`)
+      }
+
+      const deletedTarget = normalizeTargetValue(entry.target)
+      const viewedTarget = normalizeTargetValue(selectedTarget || scanData?.input)
+
+      if (deletedTarget && viewedTarget && deletedTarget === viewedTarget) {
+        clearCurrentScanView()
+      } else {
+        const statsResponse = await fetch(`${API_BASE}/stats`, { cache: "no-store" })
+        if (statsResponse.ok) {
+          const statsPayload = await statsResponse.json()
+          const history = Array.isArray(statsPayload?.scan_history) ? statsPayload.scan_history : []
+          if (history.length === 0) {
+            clearCurrentScanView()
+          }
+        }
+      }
+
+      return true
+    } catch (err) {
+      console.error("Failed to delete scan history entry:", err)
+      return false
+    }
+  }
+
+  const onHistoryRescan = (entry) => {
+    const target = String(entry?.target || "").trim()
+    if (!target) return
+
+    setSelectedTarget(null)
+    setScanData(null)
+    setActiveNav("Scan")
+    setRequestedScanTarget(target)
+    setScanRequestNonce((prev) => prev + 1)
+  }
+
+  const handleRequestedScanConsumed = () => {
+    setRequestedScanTarget(null)
+  }
+
+  const handleOpenScanner = () => {
+    setEntryStage("auth")
+  }
+
+  if (entryStage === "intro") {
+    return <IntroSequence onComplete={() => setEntryStage("landing")} />
+  }
+
+  if (entryStage === "landing") {
+    return (
+      <LandingPage
+        onEnter={handleOpenScanner}
+        onGoAuth={() => setEntryStage("auth")}
+      />
+    )
+  }
 
   if (entryStage === "auth") {
     return (
       <AuthPage
-        onBack={() => setEntryStage("auth")}
+        onBack={() => setEntryStage("landing")}
         onAuthSuccess={handleAuthSuccess}
       />
     )
@@ -130,16 +201,36 @@ function App() {
       <Navbar
         activeNav={activeNav}
         onNavClick={setActiveNav}
-        theme={theme}
-        toggleTheme={toggleTheme}
         onLogout={handleLogout}
         authUser={authUser}
       />
       <main style={{ paddingTop: '64px' }}>
-        {activeNav === "Scan" && <VaptScanner onScanComplete={onScanComplete} theme={theme} previewMode={previewMode} onRequireLogin={() => setEntryStage("auth")} />}
-        {activeNav === "Vulns" && <Vulns scanData={scanData} theme={theme} selectedTarget={selectedTarget} />}
-        {activeNav === "Stats" && <Stats theme={theme} onHistorySelect={onHistorySelect} />}
-        {activeNav === "Map" && <div style={{ height: "100vh", background: theme === 'dark' ? '#0a0f1a' : '#f8fafc' }} />}
+        {activeNav === "Scan" && (
+          <VaptScanner
+            onScanComplete={onScanComplete}
+            theme={theme}
+            requestedScanTarget={requestedScanTarget}
+            scanRequestNonce={scanRequestNonce}
+            onRequestedScanConsumed={handleRequestedScanConsumed}
+          />
+        )}
+        {activeNav === "Vulns" && (
+          <Vulns
+            scanData={scanData}
+            theme={theme}
+            selectedTarget={selectedTarget}
+            resetNonce={vulnsResetNonce}
+          />
+        )}
+        {activeNav === "Stats" && (
+          <Stats
+            theme={theme}
+            onHistorySelect={onHistorySelect}
+            onHistoryDelete={onHistoryDelete}
+            onHistoryRescan={onHistoryRescan}
+          />
+        )}
+        {activeNav === "Map" && <div style={{ height: "100vh", background: '#f8fafc' }} />}
       </main>
     </>
   )

@@ -1,6 +1,82 @@
-import { useState, useEffect } from "react";
-const DEFAULT_API_HOST = `${window.location.protocol}//${window.location.hostname}:8000`;
-const API_BASE = (import.meta.env.VITE_API_URL || DEFAULT_API_HOST).replace(/\/+$/, "");
+import { useState, useEffect, useRef } from "react";
+import { API_BASE } from "../lib/api";
+
+const LIGHT_MAROON_PAGE_BG = "#fcf8f3";
+
+function BlobBg() {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas.getContext("2d");
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+    const resize = () => {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    };
+    window.addEventListener("resize", resize);
+
+    const blobs = [
+      { x: W * 0.15, y: H * 0.3, r: 380, color: "#1a1a2e", vx: 0.08, vy: 0.06 },
+      { x: W * 0.8, y: H * 0.65, r: 320, color: "#6b1f3a", vx: -0.07, vy: 0.09 },
+      { x: W * 0.5, y: H * 0.1, r: 220, color: "#e8d5c4", vx: 0.06, vy: -0.05 },
+      { x: W * 0.9, y: H * 0.1, r: 200, color: "#6b1f3a", vx: -0.05, vy: 0.08 },
+    ];
+
+    let raf;
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "#f5f0e8";
+      ctx.fillRect(0, 0, W, H);
+      blobs.forEach((b) => {
+        b.x += b.vx;
+        b.y += b.vy;
+        if (b.x < -b.r) b.x = W + b.r;
+        if (b.x > W + b.r) b.x = -b.r;
+        if (b.y < -b.r) b.y = H + b.r;
+        if (b.y > H + b.r) b.y = -b.r;
+        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+        g.addColorStop(0, b.color + "40");
+        g.addColorStop(1, b.color + "00");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.strokeStyle = "rgba(26,26,46,0.04)";
+      ctx.lineWidth = 0.7;
+      const size = 42;
+      const rows = Math.ceil(H / (size * 1.73)) + 2;
+      const cols = Math.ceil(W / (size * 2)) + 2;
+      for (let r = -1; r < rows; r += 1) {
+        for (let c = -1; c < cols; c += 1) {
+          const cx = c * size * 2 + (r % 2) * size + size;
+          const cy = r * size * 1.73 + size;
+          ctx.beginPath();
+          for (let a = 0; a < 6; a += 1) {
+            const angle = (Math.PI / 3) * a - Math.PI / 6;
+            const px = cx + size * 0.88 * Math.cos(angle);
+            const py = cy + size * 0.88 * Math.sin(angle);
+            if (a === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.stroke();
+        }
+      }
+      raf = requestAnimationFrame(draw);
+    };
+
+    draw();
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
+
+  return <canvas ref={ref} className="scan-blob-canvas" />;
+}
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const GlobeIcon = ({ size = 17 }) => (
@@ -72,6 +148,21 @@ const ServerIcon = ({ size = 13 }) => (
     <line x1="6" y1="6" x2="6.01" y2="6" /><line x1="6" y1="18" x2="6.01" y2="18" />
   </svg>
 );
+const TrashIcon = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 6h18" />
+    <path d="M8 6V4h8v2" />
+    <path d="M19 6l-1 14H6L5 6" />
+    <path d="M10 11v6" />
+    <path d="M14 11v6" />
+  </svg>
+);
+const RescanIcon = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+    <path d="M21 3v6h-6" />
+  </svg>
+);
 
 const INITIAL_STATS = {
   scan_history: [],
@@ -100,27 +191,641 @@ const INITIAL_STATS = {
 // ── Risk color helper ─────────────────────────────────────────────────────────
 function riskColor(score) {
   if (score >= 70) return "text-red-400";
-  if (score >= 40) return "text-amber-400";
+  if (score >= 40) return "text-orange-400";
   if (score >= 20) return "text-yellow-400";
   return "text-emerald-400";
 }
 function riskLabel(score) {
   if (score >= 70) return { text: "CRITICAL", cls: "bg-red-500/10 border-red-500/40 text-red-400" };
-  if (score >= 40) return { text: "HIGH",     cls: "bg-amber-500/10 border-amber-500/40 text-amber-400" };
+  if (score >= 40) return { text: "HIGH",     cls: "bg-orange-500/10 border-orange-500/40 text-orange-400" };
   if (score >= 20) return { text: "MEDIUM",   cls: "bg-yellow-500/10 border-yellow-500/40 text-yellow-400" };
   return                  { text: "LOW",      cls: "bg-emerald-500/10 border-emerald-500/40 text-emerald-400" };
 }
 function typeColor(type) {
-  if (type === "Domain") return "text-cyan-400 bg-cyan-400/8 border-cyan-400/20";
+  if (type === "Domain") return "text-[var(--accent)] bg-[rgba(107,31,58,0.08)] border-[rgba(107,31,58,0.2)]";
   if (type === "Range")  return "text-violet-400 bg-violet-400/8 border-violet-400/20";
-  return "text-cyan-400 bg-cyan-500/[0.05] border-cyan-500/15";
+  return "text-[var(--accent)] bg-[rgba(107,31,58,0.05)] border-[rgba(107,31,58,0.15)]";
 }
 
-export default function Stats({ theme, onHistorySelect }) {
+function StackedColumn3DGraph({ items, total, isDark, emptyLabel = "No data" }) {
+  const safeItems = items.filter((item) => (Number(item?.count) || 0) > 0);
+  const [hovered, setHovered] = useState(null);
+
+  const shadeColor = (hex, amount = 0) => {
+    const normalized = String(hex || "").replace("#", "");
+    if (normalized.length !== 6) return hex;
+    const num = Number.parseInt(normalized, 16);
+    const adjust = (channel) => Math.max(0, Math.min(255, channel + amount));
+    const r = adjust((num >> 16) & 255);
+    const g = adjust((num >> 8) & 255);
+    const b = adjust(num & 255);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+
+  const blendWithWhite = (hex, weight = 0.2) => {
+    const normalized = String(hex || "").replace("#", "");
+    if (normalized.length !== 6) return hex;
+    const num = Number.parseInt(normalized, 16);
+    const mix = (channel) => Math.round(channel + (255 - channel) * weight);
+    const r = mix((num >> 16) & 255);
+    const g = mix((num >> 8) & 255);
+    const b = mix(num & 255);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+
+  return (
+    <div className={`rounded-xl p-3 ${isDark ? 'bg-white/[0.02] border border-white/5' : 'bg-gray-50 border border-gray-200'}`}>
+      {total <= 0 || safeItems.length === 0 ? (
+        <div className={`h-44 flex items-center justify-center text-sm ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
+          {emptyLabel}
+        </div>
+      ) : (
+        <div className="relative h-44 flex items-end justify-center gap-0.5 px-1 pb-2 pt-2 overflow-visible">
+          {safeItems.map((item) => {
+            const ratio = total > 0 ? item.count / total : 0;
+            const height = Math.max(42, Math.min(128, ratio * 250));
+            return (
+              <div
+                key={item.label}
+                className="relative flex flex-col items-center justify-end gap-2 min-w-0 h-full"
+                onMouseEnter={() => setHovered(item.label)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                {hovered === item.label ? (
+                  <div
+                    className={`absolute left-1/2 z-10 -translate-x-1/2 rounded-lg px-3 py-2 text-xs border pointer-events-none whitespace-nowrap ${isDark ? 'bg-[#09111d] border-cyan-400/20 text-slate-200' : 'bg-white border-gray-200 text-gray-800'}`}
+                    style={{ bottom: height + 42 }}
+                  >
+                    <div className="font-semibold">{item.label}</div>
+                    <div className="font-mono mt-1" style={{ color: item.color }}>{item.count} findings</div>
+                    <div className={`${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{item.pct}% share</div>
+                  </div>
+                ) : null}
+                <div className="relative cursor-pointer" style={{ width: 54, height }}>
+                  <svg
+                    viewBox={`0 0 60 ${height + 18}`}
+                    width="54"
+                    height={height + 18}
+                    className="overflow-visible"
+                  >
+                    <defs>
+                      <linearGradient id={`stack-front-${item.label}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stopColor={shadeColor(item.color, 28)} />
+                        <stop offset="100%" stopColor={item.color} />
+                      </linearGradient>
+                      <linearGradient id={`stack-side-${item.label}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor={shadeColor(item.color, -10)} />
+                        <stop offset="100%" stopColor={shadeColor(item.color, -40)} />
+                      </linearGradient>
+                    </defs>
+                    <polygon
+                      points={`16,8 38,8 46,13 24,13`}
+                      fill={shadeColor(item.color, 54)}
+                    />
+                    <rect
+                      x="16"
+                      y="8"
+                      width="22"
+                      height={height - 8}
+                      rx="0.4"
+                      fill={`url(#stack-front-${item.label})`}
+                    />
+                    <polygon
+                      points={`38,8 46,13 46,${height + 5} 38,${height}`}
+                      fill={`url(#stack-side-${item.label})`}
+                    />
+                    <polygon
+                      points={`16,${height} 38,${height} 46,${height + 5} 24,${height + 5}`}
+                      fill={shadeColor(item.color, -18)}
+                      opacity="0.12"
+                    />
+                    <line x1="16" y1="8" x2="38" y2="8" stroke={shadeColor(item.color, 70)} strokeWidth="1.1" opacity="0.72" />
+                    <line x1="38" y1="8" x2="46" y2="13" stroke={shadeColor(item.color, 20)} strokeWidth="1" opacity="0.42" />
+                    <line x1="24" y1="13" x2="46" y2="13" stroke={shadeColor(item.color, 10)} strokeWidth="0.8" opacity="0.24" />
+                    <line x1="38" y1="8" x2="38" y2={height} stroke={shadeColor(item.color, -14)} strokeWidth="1" opacity="0.36" />
+                    <line x1="46" y1="13" x2="46" y2={height + 5} stroke={shadeColor(item.color, -46)} strokeWidth="1" opacity="0.28" />
+                  </svg>
+                </div>
+                <div className="text-center min-w-0">
+                  <div className={`text-[11px] truncate max-w-[72px] ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>{item.label}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MultiLineTrendGraph({ items, total, isDark }) {
+  const activeItems = items.filter((item) => (Number(item?.count) || 0) > 0);
+  const chartItems = activeItems.length > 0 ? activeItems : items;
+  const [hovered, setHovered] = useState(null);
+  const width = 260;
+  const height = 144;
+  const leftPad = 12;
+  const rightPad = 12;
+  const topPad = 10;
+  const bottomPad = 18;
+  const innerWidth = width - leftPad - rightPad;
+  const innerHeight = height - topPad - bottomPad;
+  const denominator = Math.max(total, ...chartItems.map((item) => Number(item?.count) || 0), 1);
+
+  const buildPath = (item, index) => {
+    const pct = (Number(item?.count) || 0) / denominator;
+    const amp = Math.max(12, innerHeight * (0.18 + pct * 0.38));
+    const baseY = topPad + innerHeight * (0.22 + index * 0.18);
+    const startX = leftPad;
+    const endX = leftPad + innerWidth;
+    const cp1x = leftPad + innerWidth * 0.25;
+    const cp2x = leftPad + innerWidth * 0.68;
+    const cp3x = leftPad + innerWidth * 0.82;
+    const y1 = Math.max(topPad + 6, baseY + amp * (index % 2 === 0 ? -1 : 1));
+    const y2 = Math.min(topPad + innerHeight - 6, baseY + amp * (index % 2 === 0 ? 0.9 : -0.9));
+    const y3 = Math.max(topPad + 6, baseY + amp * (index % 2 === 0 ? 0.22 : -0.22));
+    return `M ${startX} ${baseY} C ${cp1x} ${y1}, ${cp2x} ${y2}, ${endX} ${y3}`;
+  };
+
+  const getTooltipPosition = (index) => {
+    const baseY = topPad + innerHeight * (0.22 + index * 0.18);
+    const amp = Math.max(
+      12,
+      innerHeight * (0.18 + (((Number(chartItems[index]?.count) || 0) / denominator) * 0.38))
+    );
+    const y3 = Math.max(
+      topPad + 6,
+      baseY + amp * (index % 2 === 0 ? 0.22 : -0.22)
+    );
+    return {
+      left: Math.max(56, Math.min(width - 56, leftPad + innerWidth * 0.78)),
+      top: Math.max(8, y3 - 44),
+    };
+  };
+
+  return (
+    <div className={`rounded-xl border p-3 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-gray-50 border-gray-200'}`}>
+      <div className="relative h-44">
+        {hovered ? (
+          <div
+            className={`absolute z-10 rounded-lg px-3 py-2 text-xs border pointer-events-none -translate-x-1/2 ${isDark ? 'bg-[#09111d] border-cyan-400/20 text-slate-200' : 'bg-white border-gray-200 text-gray-800'}`}
+            style={getTooltipPosition(chartItems.findIndex((item) => item.label === hovered.label))}
+          >
+            <div className="font-semibold">{hovered.label}</div>
+            <div className="font-mono mt-1" style={{ color: hovered.color }}>{hovered.count} findings</div>
+            <div className={`${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{Math.round((hovered.count / Math.max(total, 1)) * 100)}% share</div>
+          </div>
+        ) : null}
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full">
+          {[0.18, 0.36, 0.54, 0.72, 0.9].map((step) => (
+            <line
+              key={step}
+              x1={leftPad}
+              x2={width - rightPad}
+              y1={topPad + innerHeight * step}
+              y2={topPad + innerHeight * step}
+              stroke={isDark ? "rgba(148,163,184,0.16)" : "rgba(148,163,184,0.22)"}
+              strokeWidth="1"
+            />
+          ))}
+          {chartItems.map((item, index) => (
+            <g
+              key={item.label}
+              onMouseEnter={() => setHovered(item)}
+              onMouseLeave={() => setHovered(null)}
+            >
+              <path
+                d={buildPath(item, index)}
+                fill="none"
+                stroke={item.color}
+                strokeWidth="2.2"
+                strokeLinecap="round"
+              />
+              <path
+                d={buildPath(item, index)}
+                fill="none"
+                stroke="transparent"
+                strokeWidth="14"
+                strokeLinecap="round"
+              />
+            </g>
+          ))}
+        </svg>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mt-2">
+        {chartItems.map((item) => (
+          <div key={item.label} className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-0.5 flex-shrink-0 rounded-full" style={{ background: item.color }} />
+              <span className={`text-[11px] truncate ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>{item.label}</span>
+            </div>
+            <span className="text-[10px] font-mono" style={{ color: item.color }}>{item.count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatFoundLabel(count) {
+  return `${count} found`;
+}
+
+function DistributionCard({ title, subtitle, icon, iconColor, borderColor, headerBorderColor, children, theme = "light" }) {
+  const isDark = theme === "dark";
+  return (
+    <div
+      className={`overflow-hidden rounded-[28px] border ${isDark ? 'bg-[#0a0f1a] text-slate-200' : 'bg-white text-gray-800'}`}
+      style={{ borderColor }}
+    >
+      <div className="px-5 py-4" style={{ borderBottom: `1px solid ${headerBorderColor}` }}>
+        <div className="flex items-center gap-2 text-xs font-bold tracking-[0.18em]" style={{ color: iconColor }}>
+          {icon}
+          {title}
+        </div>
+        <p className={`mt-1 text-xs ${isDark ? 'text-slate-300' : 'text-gray-500'}`}>{subtitle}</p>
+      </div>
+      <div className="px-5 py-4">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function RiskDistributionList({ items, totals, theme = "light" }) {
+  const isDark = theme === "dark";
+  const maxCount = Math.max(...items.map((item) => Number(item.count) || 0), 1);
+  const rowTints = isDark
+    ? ["rgba(239,68,68,0.08)", "rgba(249,115,22,0.08)", "rgba(234,179,8,0.08)", "rgba(16,185,129,0.08)"]
+    : ["rgba(239,68,68,0.07)", "rgba(245,158,11,0.07)", "rgba(234,179,8,0.08)", "rgba(16,185,129,0.08)"];
+  const rowBorders = isDark
+    ? ["rgba(248,113,113,0.22)", "rgba(251,146,60,0.22)", "rgba(250,204,21,0.22)", "rgba(52,211,153,0.22)"]
+    : ["rgba(248,113,113,0.28)", "rgba(251,146,60,0.28)", "rgba(250,204,21,0.28)", "rgba(52,211,153,0.28)"];
+
+  return (
+    <div className="flex flex-col gap-3.5">
+      {items.map((item, index) => {
+        const widthPct = `${Math.max(8, Math.round(((Number(item.count) || 0) / maxCount) * 100))}%`;
+        return (
+          <div
+            key={item.label}
+            className="rounded-[14px] border px-4 py-3"
+            style={{ background: rowTints[index], borderColor: rowBorders[index] }}
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="h-3 w-3 rounded-full" style={{ background: item.color }} />
+                <span className={`text-[14px] font-semibold ${isDark ? 'text-slate-100' : 'text-[#24395d]'}`}>{item.label}</span>
+              </div>
+              <div className="flex min-w-[98px] items-center justify-end gap-3">
+                <div className={`h-1.5 w-16 overflow-hidden rounded-full ${isDark ? 'bg-white/10' : 'bg-[#fde2e4]'}`}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: item.count > 0 ? widthPct : "0%",
+                      background: item.color,
+                      transition: "width 800ms ease",
+                    }}
+                  />
+                </div>
+                <span className="w-5 text-right font-mono text-[14px] font-bold" style={{ color: item.color }}>
+                  {item.count}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="mt-1 grid grid-cols-3 gap-2 border-t pt-3 text-center" style={{ borderColor: isDark ? "rgba(248,113,113,0.18)" : "rgba(248,113,113,0.16)" }}>
+        {[
+          { label: "IPs", value: totals.ips, color: "#06b6d4" },
+          { label: "DOMAINS", value: totals.domains, color: "#8b5cf6" },
+          { label: "RANGES", value: totals.ranges, color: isDark ? "#cbd5e1" : "#1f3a5f" },
+        ].map((item) => (
+          <div key={item.label}>
+            <div className="font-mono text-[19px] font-black" style={{ color: item.color }}>{item.value}</div>
+            <div className={`mt-1 text-[10px] tracking-[0.16em] ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{item.label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VulnerabilityBreakdownList({ items, total, theme = "light" }) {
+  const isDark = theme === "dark";
+
+  if (total <= 0 || items.length === 0) {
+    return (
+      <div className={`rounded-[18px] border px-5 py-12 text-center text-sm ${isDark ? 'border-white/10 bg-white/[0.02] text-slate-400' : 'border-amber-100 bg-amber-50/40 text-gray-500'}`}>
+        No vulnerabilities found
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3.5">
+      {items.map((item) => {
+        const pct = total > 0 ? Math.round((item.count / total) * 100) : 0;
+        return (
+          <div key={item.label}>
+            <div className="mb-1.5 flex items-center justify-between gap-4">
+              <span className={`text-[14px] ${isDark ? 'text-slate-100' : 'text-[#3b4f74]'}`}>{item.label}</span>
+              <div className="flex items-center gap-2 font-mono text-[13px]">
+                <span className={isDark ? 'text-slate-300' : 'text-[#24395d]'}>{formatFoundLabel(item.count)}</span>
+                <span className="font-bold" style={{ color: item.color }}>{pct}%</span>
+              </div>
+            </div>
+            <div className={`h-1.5 overflow-hidden rounded-full ${isDark ? 'bg-white/10' : 'bg-[#faf7ef]'}`}>
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: item.count > 0 ? `${Math.max(pct, 8)}%` : "0%",
+                  background: item.color,
+                  transition: "width 800ms ease",
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="mt-2 flex items-center justify-between border-t pt-3" style={{ borderColor: isDark ? "rgba(245,158,11,0.18)" : "rgba(245,158,11,0.16)" }}>
+        <span className={`text-[13px] ${isDark ? 'text-slate-300' : 'text-[#3b4f74]'}`}>Total vulnerabilities found</span>
+        <span className="font-mono text-[28px] font-black leading-none" style={{ color: "#eab308" }}>{total}</span>
+      </div>
+    </div>
+  );
+}
+
+function SplitAreaGraph({ items, total, isDark }) {
+  if (total <= 0 || items.every((item) => !item.count)) {
+    return (
+      <div className={`rounded-xl border h-44 flex items-center justify-center ${isDark ? 'bg-white/[0.02] border-white/5 text-slate-500' : 'bg-gray-50 border-gray-200 text-gray-500'}`}>
+        No risk data
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-xl border overflow-hidden h-44 ${isDark ? 'bg-white/[0.02] border-white/5' : 'bg-gray-50 border-gray-200'}`}>
+      <div className="flex h-full">
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className="relative flex flex-col justify-end p-3 min-w-0"
+            style={{
+              flex: Math.max(item.count, 0.8),
+              background: `linear-gradient(180deg, ${item.color}12 0%, ${item.color}28 100%)`,
+              borderRight: '1px solid rgba(148,163,184,0.12)',
+            }}
+          >
+            <div
+              className="absolute inset-x-0 bottom-0"
+              style={{
+                height: `${Math.max(14, (item.count / total) * 100)}%`,
+                background: `linear-gradient(180deg, ${item.color}55, ${item.color}99)`,
+              }}
+            />
+            <div className="relative z-10">
+              <div className={`text-[10px] uppercase tracking-wider truncate ${isDark ? 'text-slate-200' : 'text-gray-700'}`}>{item.label}</div>
+              <div className="text-xl font-black font-mono mt-1" style={{ color: item.color }}>{item.count}</div>
+              <div className={`text-[10px] font-mono ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>{Math.round((item.count / total) * 100)}%</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ThreeDPiePorts({ items, isDark }) {
+  const safeItems = items.filter((item) => (Number(item?.count) || 0) > 0).slice(0, 5);
+  const total = safeItems.reduce((sum, item) => sum + (Number(item?.count) || 0), 0);
+  const [hovered, setHovered] = useState(null);
+
+  const shadeColor = (hex, amount = 0) => {
+    const normalized = String(hex || "").replace("#", "");
+    if (normalized.length !== 6) return hex;
+    const num = Number.parseInt(normalized, 16);
+    const adjust = (channel) => Math.max(0, Math.min(255, channel + amount));
+    const r = adjust((num >> 16) & 255);
+    const g = adjust((num >> 8) & 255);
+    const b = adjust(num & 255);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+
+  const blendWithWhite = (hex, weight = 0.2) => {
+    const normalized = String(hex || "").replace("#", "");
+    if (normalized.length !== 6) return hex;
+    const num = Number.parseInt(normalized, 16);
+    const mix = (channel) => Math.round(channel + (255 - channel) * weight);
+    const r = mix((num >> 16) & 255);
+    const g = mix((num >> 8) & 255);
+    const b = mix(num & 255);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+
+  const cx = 110;
+  const cy = 72;
+  const rx = 74;
+  const ry = 42;
+  const depth = 16;
+
+  const pointOnEllipse = (angle, yOffset = 0) => ({
+    x: cx + rx * Math.cos(angle),
+    y: cy + ry * Math.sin(angle) + yOffset,
+  });
+
+  const slicePath = (start, end) => {
+    const startPt = pointOnEllipse(start);
+    const endPt = pointOnEllipse(end);
+    const largeArc = end - start > Math.PI ? 1 : 0;
+    return `M ${cx} ${cy} L ${startPt.x} ${startPt.y} A ${rx} ${ry} 0 ${largeArc} 1 ${endPt.x} ${endPt.y} Z`;
+  };
+
+  const sidePath = (start, end) => {
+    const topStart = pointOnEllipse(start);
+    const topEnd = pointOnEllipse(end);
+    const bottomStart = pointOnEllipse(start, depth);
+    const bottomEnd = pointOnEllipse(end, depth);
+    const largeArc = end - start > Math.PI ? 1 : 0;
+    return `M ${topStart.x} ${topStart.y} A ${rx} ${ry} 0 ${largeArc} 1 ${topEnd.x} ${topEnd.y} L ${bottomEnd.x} ${bottomEnd.y} A ${rx} ${ry} 0 ${largeArc} 0 ${bottomStart.x} ${bottomStart.y} Z`;
+  };
+
+  const radialWallPath = (angle) => {
+    const topArc = pointOnEllipse(angle);
+    const bottomArc = pointOnEllipse(angle, depth);
+    return `M ${cx} ${cy} L ${topArc.x} ${topArc.y} L ${bottomArc.x} ${bottomArc.y} L ${cx} ${cy + depth} Z`;
+  };
+
+  const clampInterval = (start, end, min, max) => {
+    const s = Math.max(start, min);
+    const e = Math.min(end, max);
+    return e > s ? [s, e] : null;
+  };
+
+  let angle = -Math.PI / 2;
+  const slices = safeItems.map((item) => {
+    const sweep = total > 0 ? ((Number(item.count) || 0) / total) * Math.PI * 2 : 0;
+    const start = angle;
+    const end = angle + sweep;
+    angle = end;
+    return {
+      ...item,
+      start,
+      end,
+      offsetX: 0,
+      offsetY: 0,
+    };
+  });
+
+  const smallestPort = [...slices]
+    .sort((a, b) => (Number(a.count) || 0) - (Number(b.count) || 0))[0]?.port;
+  const greenSlicePort = slices[0]?.port;
+  const slicesWithOffset = slices.map((slice) => {
+    if (slice.port !== smallestPort && slice.port !== greenSlicePort) {
+      return slice;
+    }
+    const mid = slice.start + (slice.end - slice.start) / 2;
+    const offset = 5;
+    return {
+      ...slice,
+      offsetX: Math.cos(mid) * offset,
+      offsetY: Math.sin(mid) * offset,
+    };
+  });
+
+  const visibleSides = slicesWithOffset.flatMap((slice) => {
+    const normalizedIntervals = [
+      clampInterval(slice.start, slice.end, 0, Math.PI),
+      clampInterval(slice.start, slice.end, Math.PI * 2, Math.PI * 3),
+    ].filter(Boolean);
+
+    return normalizedIntervals.map(([start, end]) => ({
+      key: `${slice.label}-${start}`,
+      color: slice.color,
+      label: slice.label,
+      path: sidePath(start % (Math.PI * 2), end % (Math.PI * 2) || Math.PI * 2),
+      offsetX: slice.offsetX,
+      offsetY: slice.offsetY,
+    }));
+  });
+
+  const explodedWalls = slicesWithOffset
+    .filter((slice) => slice.offsetX || slice.offsetY)
+    .flatMap((slice) => ([
+      {
+        key: `${slice.label}-start-wall`,
+        path: radialWallPath(slice.start),
+        fill: blendWithWhite(shadeColor(slice.color, -22), 0.08),
+        offsetX: slice.offsetX,
+        offsetY: slice.offsetY,
+      },
+      {
+        key: `${slice.label}-end-wall`,
+        path: radialWallPath(slice.end),
+        fill: blendWithWhite(shadeColor(slice.color, -30), 0.04),
+        offsetX: slice.offsetX,
+        offsetY: slice.offsetY,
+      },
+    ]));
+
+  if (safeItems.length === 0) {
+    return (
+      <div className={`h-44 flex items-center justify-center text-sm ${isDark ? 'text-slate-500' : 'text-gray-500'}`}>
+        No port data
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      {hovered ? (
+        <div className={`absolute right-2 top-2 z-10 rounded-lg px-3 py-2 text-xs border pointer-events-none ${isDark ? 'bg-[#09111d] border-cyan-400/20 text-slate-200' : 'bg-white border-gray-200 text-gray-800'}`}>
+          <div className="font-semibold">Port {hovered.port} · {hovered.service}</div>
+          <div className="font-mono mt-1" style={{ color: hovered.color }}>{hovered.count} hosts</div>
+          <div className={`${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{hovered.pct}% share</div>
+        </div>
+      ) : null}
+      <div className="flex items-center justify-center">
+        <svg viewBox="0 0 220 156" className="h-44 w-full max-w-[260px] overflow-visible">
+          <ellipse
+            cx={cx}
+            cy={cy + depth + 6}
+            rx={rx + 6}
+            ry={ry - 8}
+            fill={isDark ? "rgba(15,23,42,0.45)" : "rgba(148,163,184,0.18)"}
+          />
+          {visibleSides.map((slice) => (
+            <path
+              key={slice.key}
+              d={slice.path}
+              fill={blendWithWhite(shadeColor(slice.color, -16), 0.1)}
+              transform={`translate(${slice.offsetX} ${slice.offsetY})`}
+            />
+          ))}
+          {explodedWalls.map((wall) => (
+            <path
+              key={wall.key}
+              d={wall.path}
+              fill={wall.fill}
+              transform={`translate(${wall.offsetX} ${wall.offsetY})`}
+            />
+          ))}
+          {slicesWithOffset.map((slice) => (
+            <path
+              key={slice.label}
+              d={slicePath(slice.start, slice.end)}
+              fill={`url(#pie-grad-${slice.port})`}
+              stroke="none"
+              onMouseEnter={() => setHovered(slice)}
+              onMouseLeave={() => setHovered(null)}
+              transform={`translate(${slice.offsetX} ${slice.offsetY})`}
+              style={{ cursor: "pointer" }}
+            />
+          ))}
+          <defs>
+            {slicesWithOffset.map((slice) => (
+              <linearGradient key={slice.port} id={`pie-grad-${slice.port}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor={blendWithWhite(slice.color, 0.35)} />
+                <stop offset="100%" stopColor={blendWithWhite(slice.color, 0.12)} />
+              </linearGradient>
+            ))}
+          </defs>
+        </svg>
+      </div>
+      <div className="grid grid-cols-1 gap-2 mt-2">
+        {safeItems.map((item) => (
+          <div
+            key={item.port}
+            className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 border ${isDark ? 'border-white/5 bg-white/[0.02]' : 'border-gray-200 bg-white'}`}
+            onMouseEnter={() => setHovered(item)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ background: item.color }} />
+              <span className={`text-xs font-black font-mono ${isDark ? 'text-cyan-400' : 'text-cyan-500'}`}>{item.port}</span>
+              <span className={`text-xs truncate ${isDark ? 'text-slate-200' : 'text-gray-700'}`}>{item.service}</span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{item.count}</span>
+              <span className="text-xs font-bold font-mono" style={{ color: item.color }}>{item.pct}%</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function Stats({ theme, onHistorySelect, onHistoryDelete, onHistoryRescan }) {
   const [statsData, setStatsData] = useState(INITIAL_STATS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("All");
+  const [busyActionId, setBusyActionId] = useState(null);
 
   useEffect(() => {
     let shouldCancel = false;
@@ -148,10 +853,7 @@ export default function Stats({ theme, onHistorySelect }) {
       }
     };
 
-    // Initial read
     fetchStats();
-
-    // Poll every 5 seconds to keep stats live
     const intervalId = setInterval(fetchStats, 5000);
 
     return () => {
@@ -160,15 +862,58 @@ export default function Stats({ theme, onHistorySelect }) {
     };
   }, []);
 
+  const removeHistoryEntry = (entryId) => {
+    setStatsData((prev) => ({
+      ...prev,
+      scan_history: prev.scan_history.filter((item) => item.id !== entryId),
+      totals: {
+        ...prev.totals,
+        scans: Math.max(0, prev.totals.scans - 1),
+      },
+    }));
+  };
+
+  const handleDelete = async (event, entry) => {
+    event.stopPropagation();
+    if (!entry || !onHistoryDelete) return;
+
+    setBusyActionId(`delete-${entry.id}`);
+    const deleted = await onHistoryDelete(entry);
+    if (deleted) {
+      removeHistoryEntry(entry.id);
+    }
+    setBusyActionId(null);
+  };
+
+  const handleRescan = (event, entry) => {
+    event.stopPropagation();
+    onHistoryRescan?.(entry);
+  };
+
   const filtered = filter === "All" ? statsData.scan_history
     : statsData.scan_history.filter(s => s.type === filter);
 
   const isDark = theme === 'dark';
+  const vulnDonutItems = statsData.vuln_breakdown.map((item) => ({
+    label: item.name,
+    count: item.count,
+    color: item.color,
+    pct: item.pct,
+  }));
+  const topCommonPorts = statsData.common_ports.slice(0, 5);
+  const riskItems = [
+    { label: "Critical Risk", count: statsData.risk_distribution.critical, color: "#ef4444" },
+    { label: "High Risk", count: statsData.risk_distribution.high, color: "#f59e0b" },
+    { label: "Medium Risk", count: statsData.risk_distribution.medium, color: "#eab308" },
+    { label: "Low Risk", count: statsData.risk_distribution.low, color: "#10b981" },
+  ];
+  const totalRiskFindings = riskItems.reduce((sum, item) => sum + item.count, 0);
 
   if (loading) {
     return (
-      <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0a0d14] text-slate-200' : 'bg-gray-50 text-gray-900'} flex items-center justify-center`}>
-        <div className="text-center">
+      <div className={`relative z-0 min-h-screen ${theme === 'dark' ? 'bg-[#0a0d14] text-slate-200' : 'text-[var(--text)]'} flex items-center justify-center`} style={theme === 'dark' ? undefined : { backgroundColor: LIGHT_MAROON_PAGE_BG }}>
+        <BlobBg />
+        <div className="relative z-10 text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-400 mx-auto mb-4"></div>
           <p>Loading statistics...</p>
         </div>
@@ -178,8 +923,9 @@ export default function Stats({ theme, onHistorySelect }) {
 
   if (error) {
     return (
-      <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0a0d14] text-slate-200' : 'bg-gray-50 text-gray-900'} flex items-center justify-center`}>
-        <div className="text-center">
+      <div className={`relative z-0 min-h-screen ${theme === 'dark' ? 'bg-[#0a0d14] text-slate-200' : 'text-[var(--text)]'} flex items-center justify-center`} style={theme === 'dark' ? undefined : { backgroundColor: LIGHT_MAROON_PAGE_BG }}>
+        <BlobBg />
+        <div className="relative z-10 text-center">
           <p className="text-red-400 mb-2">Error loading statistics</p>
           <p className="text-sm">{error}</p>
         </div>
@@ -188,9 +934,9 @@ export default function Stats({ theme, onHistorySelect }) {
   }
 
   return (
-    <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0a0d14] text-slate-200' : 'bg-gray-50 text-gray-900'}`} style={{ fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
+    <div className={`relative z-0 min-h-screen ${theme === 'dark' ? 'bg-[#0a0d14] text-slate-200' : 'text-[var(--text)]'}`} style={theme === 'dark' ? { fontFamily: "'Segoe UI',system-ui,sans-serif" } : { fontFamily: "'Segoe UI',system-ui,sans-serif", backgroundColor: LIGHT_MAROON_PAGE_BG }}>
       <style>{`
-        html,body,#root{background:${theme === 'dark' ? '#0a0d14' : '#f8fafc'};min-height:100vh;}
+        html,body,#root{background:${theme === 'dark' ? '#0a0d14' : LIGHT_MAROON_PAGE_BG};min-height:100vh;}
         ::-webkit-scrollbar{width:4px;}
         ::-webkit-scrollbar-track{background:transparent;}
         ::-webkit-scrollbar-thumb{background:${theme === 'dark' ? '#1e293b' : '#cbd5e1'};border-radius:4px;}
@@ -221,13 +967,14 @@ export default function Stats({ theme, onHistorySelect }) {
           border-bottom: 1px solid ${theme === 'dark' ? 'rgba(0,229,255,0.08)' : 'rgba(148,163,184,0.2)'};
         }
       `}</style>
+      <BlobBg />
 
-      <main className="w-full max-w-[1400px] mx-auto px-8 py-5">
+      <main className="relative z-10 w-full max-w-[1400px] mx-auto px-8 py-5">
         {/* ── Page header ── */}
         <div className="flex items-start justify-between mb-5">
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-cyan-400 font-mono text-xs">
-              <TerminalIcon size={13} color="#00e5ff" /> GLOBAL STATISTICS
+            <div className="flex items-center gap-2 text-[var(--accent)] font-mono text-xs">
+              <TerminalIcon size={13} color="#6b1f3a" /> GLOBAL STATISTICS
             </div>
             {/*
             <h1
@@ -243,13 +990,14 @@ export default function Stats({ theme, onHistorySelect }) {
               Aggregated data from all scans performed in this session
             </p>
             */}
-          </div>
+          </div>
+
         </div>
 
         {/* ── Top summary cards ── */}
         <div className="grid grid-cols-4 gap-4 mb-7 mt-7">
           {[
-            { label: "TOTAL SCANS",       val: statsData.totals.scans,      sub: "All targets",         icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>, valCls: "text-cyan-400", border: "border-cyan-500/20" },
+            { label: "TOTAL SCANS",       val: statsData.totals.scans,      sub: "All targets",         icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b1f3a" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>, valCls: "text-[var(--accent)]", border: "border-cyan-500/20" },
             { label: "IPs SCANNED",       val: statsData.totals.ips + statsData.totals.ranges * 8, sub: `${statsData.totals.ips} direct · ${statsData.totals.ranges} ranges`, icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>, valCls: "text-violet-400", border: "border-cyan-500/20" },
             { label: "VULNERABILITIES",   val: statsData.totals.total_vulns, sub: `${statsData.totals.critical} critical risk`, icon: <AlertTriangle color="#f59e0b" size={16} />, valCls: "text-amber-400", border: "border-amber-500/15" },
             { label: "EXPOSED TARGETS",   val: statsData.totals.exposed,    sub: "Critical risk found",  icon: <CircleAlert color="#ef4444" size={16} />, valCls: "text-red-400", border: "border-red-500/15" },
@@ -267,9 +1015,15 @@ export default function Stats({ theme, onHistorySelect }) {
             >
               <div className="flex items-center justify-between mb-2">
                 <span className={`text-[11px] font-bold tracking-widest ${theme === 'dark' ? 'text-white' : 'text-gray-700'}`}>{card.label}</span>
-                <span className="flex">{card.icon}</span>
+                <span className="flex">
+                  {card.label === "IPs SCANNED" ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b1f3a" strokeWidth="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                  ) : (
+                    card.icon
+                  )}
+                </span>
               </div>
-              <div className={`text-[30px] font-black font-mono mb-1 ${card.valCls}`}>{card.val}</div>
+              <div className={`text-[30px] font-black font-mono mb-1 ${(card.label === "TOTAL SCANS" || card.label === "IPs SCANNED") ? 'text-[var(--accent)]' : card.valCls}`}>{card.val}</div>
               <div className={`text-xs ${theme === 'dark' ? 'text-slate-400' : 'text-gray-500'} font-mono`}>{card.sub}</div>
             </div>
           ))}
@@ -280,17 +1034,17 @@ export default function Stats({ theme, onHistorySelect }) {
 
           {/* Scan history table — 2/3 width */}
           <div className="col-span-2 stat-card overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-cyan-400/30">
-              <div className={`flex items-center gap-2 text-xs font-bold tracking-widest ${isDark ? 'text-cyan-400' : 'text-blue-500'}`}>
-                <TerminalIcon size={13} color={isDark ? '#00e5ff' : '#0284c7'} /> SCAN HISTORY
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[rgba(107,31,58,0.2)]">
+              <div className={`flex items-center gap-2 text-xs font-bold tracking-widest ${isDark ? 'text-cyan-400' : 'text-[var(--accent)]'}`}>
+                <TerminalIcon size={13} color={isDark ? '#00e5ff' : '#6b1f3a'} /> SCAN HISTORY
               </div>
               <div className="flex gap-1.5">
                 {["All","IP","Domain","Range"].map(f => (
                   <button key={f} onClick={() => setFilter(f)}
                     className={`px-3 py-1 rounded-md text-xs font-semibold cursor-pointer transition-all border
                       ${filter === f
-                        ? `${isDark ? 'bg-cyan-400/10 border-cyan-400/30 text-cyan-400' : 'bg-blue-100 border-blue-300 text-blue-700'}`
-                        : `${isDark ? 'bg-transparent border-cyan-500/10 text-slate-300 hover:text-slate-100' : 'bg-transparent border-blue-100 text-gray-600 hover:text-blue-800'}`}`}>
+                        ? `${isDark ? 'bg-cyan-400/10 border-cyan-400/30 text-cyan-400' : 'bg-[rgba(107,31,58,0.08)] border-[rgba(107,31,58,0.2)] text-[var(--accent)]'}`
+                        : `${isDark ? 'bg-transparent border-cyan-500/10 text-slate-300 hover:text-slate-100' : 'bg-transparent border-[rgba(107,31,58,0.12)] text-gray-600 hover:text-[var(--accent)]'}`}`}>
                     {f}
                   </button>
                 ))}
@@ -300,7 +1054,7 @@ export default function Stats({ theme, onHistorySelect }) {
               <table className="w-full border-collapse text-sm scan-history-table">
                 <thead>
                   <tr>
-                    {["TARGET","TYPE","DATE","HOSTS","PORTS","VULNS","RISK SCORE","STATUS"].map(h => (
+                    {["TARGET","TYPE","DATE","HOSTS","PORTS","VULNS","RISK SCORE","STATUS","ACTIONS"].map(h => (
                       <th key={h} className={`text-left py-2.5 px-4 text-[10px] font-bold tracking-widest whitespace-nowrap ${isDark ? 'text-slate-400 border-b border-cyan-400/40 bg-cyan-500/[0.04]' : 'text-gray-500 border-b border-gray-200 bg-gray-100'}`}>{h}</th>
                     ))}
                   </tr>
@@ -327,13 +1081,47 @@ export default function Stats({ theme, onHistorySelect }) {
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-2">
                             <div className={`w-16 h-1.5 rounded-full overflow-hidden ${isDark ? 'bg-cyan-500/[0.05]' : 'bg-gray-200'}`}>
-                              <div className="h-full rounded-full" style={{ width: `${s.riskScore}%`, background: s.riskScore >= 70 ? "#ef4444" : s.riskScore >= 40 ? "#f59e0b" : "#10b981" }} />
+                              <div className="h-full rounded-full" style={{ width: `${s.riskScore}%`, background: s.riskScore >= 70 ? "#ef4444" : s.riskScore >= 40 ? "#f97316" : s.riskScore >= 20 ? "#facc15" : "#10b981" }} />
                             </div>
                             <span className={`text-xs font-bold font-mono ${riskColor(s.riskScore)}`}>{s.riskScore}</span>
                           </div>
                         </td>
                         <td className="py-3 px-4">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${risk.cls}`}>{risk.text}</span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <span
+                              role="button"
+                              aria-label={`Rescan ${s.target}`}
+                              title={`Rescan ${s.target}`}
+                              onClick={(event) => handleRescan(event, s)}
+                              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
+                                isDark
+                                  ? 'border-cyan-500/25 text-cyan-300 hover:bg-cyan-500/10'
+                                  : 'border-blue-200 text-blue-600 hover:bg-blue-50'
+                              }`}
+                            >
+                              <RescanIcon />
+                            </span>
+                            <span
+                              role="button"
+                              aria-label={`Delete ${s.target}`}
+                              title={`Delete ${s.target}`}
+                              onClick={(event) => handleDelete(event, s)}
+                              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
+                                busyActionId === `delete-${s.id}`
+                                  ? isDark
+                                    ? 'border-red-500/35 text-red-300 bg-red-500/10 opacity-70'
+                                    : 'border-red-200 text-red-500 bg-red-50 opacity-70'
+                                  : isDark
+                                    ? 'border-red-500/25 text-red-300 hover:bg-red-500/10'
+                                    : 'border-red-200 text-red-500 hover:bg-red-50'
+                              }`}
+                            >
+                              <TrashIcon />
+                            </span>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -355,26 +1143,10 @@ export default function Stats({ theme, onHistorySelect }) {
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={isDark ? '#00e5ff' : '#0ea5e9'} strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                 MOST COMMON OPEN PORTS
               </div>
-              <p className={`${isDark ? 'text-slate-200' : 'text-gray-600'} text-xs mt-1`}>Across all scanned targets</p>
+              <p className={`${isDark ? 'text-slate-200' : 'text-gray-600'} text-xs mt-1`}>3D pie of top 5 ports across all scanned targets</p>
             </div>
-            <div className="right-panel-scroll px-6 py-4 flex flex-col gap-3.5">
-              {statsData.common_ports.map((p, i) => (
-                <div key={p.port}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-black font-mono w-10 ${isDark ? 'text-cyan-400' : 'text-cyan-400'}`}>{p.port}</span>
-                      <span className={`text-xs font-semibold ${isDark ? 'text-slate-200' : 'text-gray-700'}`}>{p.service}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-mono ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>{p.count} hosts</span>
-                      <span className={`text-xs font-bold font-mono ${isDark ? 'text-slate-200' : 'text-gray-700'}`} style={{ color: p.color }}>{p.pct}%</span>
-                    </div>
-                  </div>
-                  <div className="h-1 rounded-full bg-cyan-500/[0.05] overflow-hidden">
-                    <div className="h-full rounded-full transition-all" style={{ width: `${p.pct}%`, background: p.color, opacity: 0.7 }} />
-                  </div>
-                </div>
-              ))}
+            <div className="px-6 py-4">
+              <ThreeDPiePorts items={topCommonPorts} isDark={isDark} />
             </div>
           </div>
         </div>
@@ -391,36 +1163,21 @@ export default function Stats({ theme, onHistorySelect }) {
         <div className="grid grid-cols-3 gap-5">
 
           {/* Vulnerability breakdown */}
-          <div className={`overflow-hidden rounded-xl border ${isDark ? 'bg-[#0a0f1a]' : 'bg-white'} `} style={isDark ? { borderColor:'rgba(251,191,36,0.28)' } : { borderColor:'rgba(245,158,11,0.42)' }}>
-            <div className={`px-6 py-4 border-b ${isDark ? 'border-amber-400/15' : 'border-amber-200'}`}>
-              <div className={`flex items-center gap-2 ${isDark ? 'text-amber-400' : 'text-amber-600'} text-xs font-bold tracking-widest`}>
-                <AlertTriangle color={isDark ? '#f59e0b' : '#d97706'} size={13} /> VULNERABILITY BREAKDOWN
-              </div>
-              <p className={`${isDark ? 'text-white' : 'text-gray-500'} text-xs mt-1`}>By vulnerability category</p>
-            </div>
-            <div className="px-6 py-5 flex flex-col gap-4">
-              {statsData.vuln_breakdown.map(v => (
-                <div key={v.name}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-gray-500'}`}>{v.name}</span>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-mono ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>{v.count} found</span>
-                      <span className="text-xs font-bold font-mono" style={{ color: v.color }}>{v.pct}%</span>
-                    </div>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-amber-400/[0.07] overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${v.pct}%`, background: v.color, opacity: 0.75 }} />
-                  </div>
-                </div>
-              ))}
-              <div className={`mt-2 pt-4 border-t ${isDark ? 'border-amber-400/15' : 'border-amber-200/40'}`}>
-                <div className="flex items-center justify-between">
-                  <span className={`text-xs ${isDark ? 'text-slate-200' : 'text-gray-500'}`}>Total vulnerabilities found</span>
-                  <span className="text-lg font-black font-mono text-amber-400">{statsData.totals.total_vulns}</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          <DistributionCard
+            title="VULNERABILITY BREAKDOWN"
+            subtitle="By vulnerability category"
+            icon={<AlertTriangle color={isDark ? '#f59e0b' : '#f59e0b'} size={13} />}
+            iconColor={isDark ? '#fbbf24' : '#f59e0b'}
+            borderColor={isDark ? 'rgba(251,191,36,0.28)' : 'rgba(245,158,11,0.42)'}
+            headerBorderColor={isDark ? 'rgba(251,191,36,0.16)' : 'rgba(245,158,11,0.16)'}
+            theme={theme}
+          >
+            <VulnerabilityBreakdownList
+              items={vulnDonutItems}
+              total={statsData.totals.total_vulns}
+              theme={theme}
+            />
+          </DistributionCard>
 
           {/* OS Detection stats */}
           <div className={`overflow-hidden rounded-xl border ${isDark ? 'bg-[#0a0f1a] text-slate-200' : 'bg-white text-gray-700'}`} style={isDark ? { borderColor:'rgba(167,139,250,0.28)' } : { borderColor:'rgba(167,139,250,0.42)' }}>
@@ -488,55 +1245,20 @@ export default function Stats({ theme, onHistorySelect }) {
           </div>
 
           {/* Risk distribution */}
-          <div className={`overflow-hidden rounded-xl border ${isDark ? 'bg-[#0a0f1a] text-slate-200' : 'bg-white text-gray-800'}`} style={isDark ? { borderColor:'rgba(248,113,113,0.28)' } : { borderColor:'rgba(248,113,113,0.42)' }}>
-            <div className={`px-6 py-4 border-b ${isDark ? 'border-red-400/15' : 'border-red-200/50'}`}>
-              <div className={`flex items-center gap-2 ${isDark ? 'text-red-400' : 'text-red-600'} text-xs font-bold tracking-widest`}>
-                <CircleAlert color="#ef4444" size={13} /> RISK DISTRIBUTION
-              </div>
-              <p className={`${isDark ? 'text-white' : 'text-gray-500'} text-xs mt-1`}>Scan results by risk level</p>
-            </div>
-            <div className="px-6 py-5 flex flex-col gap-4">
-              {[
-                { label: "Critical",  count: statsData.risk_distribution.critical, color: "#ef4444", bg: "bg-red-500/8",    border: "border-red-500/20" },
-                { label: "High",      count: statsData.risk_distribution.high, color: "#f59e0b", bg: "bg-amber-500/8", border: "border-amber-500/20" },
-                { label: "Medium",    count: statsData.risk_distribution.medium, color: "#eab308", bg: "bg-yellow-500/8", border: "border-yellow-500/20" },
-                { label: "Low",       count: statsData.risk_distribution.low,  color: "#10b981", bg: "bg-emerald-500/8", border: "border-emerald-500/20" },
-              ].map(r => (
-                <div key={r.label} className={`flex items-center justify-between px-4 py-3 rounded-lg ${r.bg} border ${r.border}`}>
-                  <div className="flex items-center gap-3">
-                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: r.color }} />
-                    <span className={`text-sm font-semibold ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>{r.label} Risk</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-16 h-1.5 rounded-full ${isDark ? 'bg-red-400/[0.08]' : 'bg-red-100'} overflow-hidden`}>
-                      <div className="h-full rounded-full" style={{ width: `${(r.count / statsData.totals.scans) * 100}%`, background: r.color }} />
-                    </div>
-                    <span className="text-lg font-black font-mono w-5 text-right" style={{ color: r.color }}>{r.count}</span>
-                  </div>
-                </div>
-              ))}
-              <div className="mt-2 pt-4 border-t border-red-400/15 grid grid-cols-3 gap-3 text-center">
-                <div>
-                  <div className="text-xl font-black font-mono text-cyan-400">{statsData.totals.ips}</div>
-                  <div className={`text-[10px] tracking-wider mt-0.5 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>IPs</div>
-                </div>
-                <div>
-                  <div className="text-xl font-black font-mono text-violet-400">{statsData.totals.domains}</div>
-                  <div className={`text-[10px] tracking-wider mt-0.5 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>DOMAINS</div>
-                </div>
-                <div>
-                  <div className={`text-xl font-black font-mono ${isDark ? 'text-slate-300' : 'text-gray-800'}`}>{statsData.totals.ranges}</div>
-                  <div className={`text-[10px] tracking-wider mt-0.5 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>RANGES</div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <DistributionCard
+            title="RISK DISTRIBUTION"
+            subtitle="Scan results by risk level"
+            icon={<CircleAlert color="#ef4444" size={13} />}
+            iconColor="#ef4444"
+            borderColor={isDark ? 'rgba(248,113,113,0.28)' : 'rgba(248,113,113,0.42)'}
+            headerBorderColor={isDark ? 'rgba(248,113,113,0.16)' : 'rgba(248,113,113,0.16)'}
+            theme={theme}
+          >
+            <RiskDistributionList items={riskItems} totals={statsData.totals} theme={theme} />
+          </DistributionCard>
 
         </div>
       </main>
     </div>
   );
 }
-
-
-

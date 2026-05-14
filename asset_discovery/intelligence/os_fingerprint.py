@@ -117,16 +117,18 @@ def _normalize_os_name(name):
     text = str(name or "").strip()
     lower = text.lower()
 
-    # Nmap often reports Windows 10/11 desktop builds as a broad shared range.
-    # Prefer a cleaner family label over showing a misleading version span.
+    # Keep version/build details when Nmap provides them. Only collapse obviously
+    # broad cross-version labels into a clearer generic family string.
     if "windows 10" in lower and "windows 11" in lower:
-        return "Microsoft Windows 11"
+        if re.search(r"\b(190\d|20h[12]|21h[12]|22h2|23h2|24h2)\b", lower):
+            return text
+        return "Microsoft Windows 10/11"
 
     if "windows 11" in lower:
-        return "Microsoft Windows 11"
+        return text if text.lower().startswith("microsoft ") else f"Microsoft {text}"
 
     if "windows 10" in lower:
-        return "Microsoft Windows 10"
+        return text if text.lower().startswith("microsoft ") else f"Microsoft {text}"
 
     return text
 
@@ -173,6 +175,43 @@ def _extract_windows_from_script_output(output):
     if "windows" not in candidate.lower():
         return None
     return candidate
+
+
+def _extract_windows_from_services(services):
+    for svc in services or []:
+        for script in svc.get("host_scripts") or []:
+            if str(script.get("id") or "").lower() == "smb-os-discovery":
+                detected = _extract_windows_from_script_output(script.get("output"))
+                if detected:
+                    return detected
+
+        for script in svc.get("scripts") or []:
+            if "smb-os-discovery" in str(script.get("id") or "").lower():
+                detected = _extract_windows_from_script_output(script.get("output"))
+                if detected:
+                    return detected
+    return None
+
+
+def _collect_os_matches_from_services(services):
+    matches = []
+    seen = set()
+    for svc in services or []:
+        for match in svc.get("os_matches") or []:
+            name = str(match.get("name") or "").strip()
+            if not name:
+                continue
+            key = (name, str(match.get("accuracy") or "").strip(), str(match.get("line") or "").strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            matches.append({
+                "name": name,
+                "accuracy": match.get("accuracy"),
+                "line": match.get("line"),
+                "osclass": match.get("osclass") or [],
+            })
+    return matches
 
 
 def _detect_windows_via_smb(ip):
@@ -278,6 +317,8 @@ def detect_os(ip):
 
 
 def detect_os_details(ip, services=None, vendor="Unknown", device_type="Unknown Device", hostname="Unknown"):
+    services = services or []
+
     local_edition = _detect_local_windows_edition() if _is_local_target(ip) else None
     if local_edition:
         return {
@@ -285,6 +326,29 @@ def detect_os_details(ip, services=None, vendor="Unknown", device_type="Unknown 
             "family": "Windows",
             "accuracy": "Exact",
             "source": "local system",
+        }
+
+    smb_name = _extract_windows_from_services(services)
+    if smb_name:
+        return {
+            "name": smb_name,
+            "family": "Windows",
+            "accuracy": "High",
+            "source": "service smb-os-discovery",
+        }
+
+    service_os_matches = _collect_os_matches_from_services(services)
+    best_service_match = _select_best_os_match(service_os_matches)
+    if best_service_match:
+        classes = best_service_match.get("osclass") or []
+        family = classes[0].get("osfamily") if classes else best_service_match.get("name", "Unknown")
+        accuracy = best_service_match.get("accuracy", "N/A")
+        normalized_name = _normalize_os_name(best_service_match.get("name", "Unknown"))
+        return {
+            "name": normalized_name,
+            "family": family or "Unknown",
+            "accuracy": f"{accuracy}%" if str(accuracy).isdigit() else str(accuracy or "N/A"),
+            "source": "service nmap osmatch",
         }
 
     try:
@@ -301,10 +365,10 @@ def detect_os_details(ip, services=None, vendor="Unknown", device_type="Unknown 
             accuracy = best_match.get("accuracy", "N/A")
             normalized_name = _normalize_os_name(best_match.get("name", "Unknown"))
             if "windows" in str(normalized_name).lower() and _service_has_port(services, 445):
-                smb_name = _detect_windows_via_smb(ip)
-                if smb_name:
+                smb_detected = _detect_windows_via_smb(ip)
+                if smb_detected:
                     return {
-                        "name": smb_name,
+                        "name": smb_detected,
                         "family": "Windows",
                         "accuracy": "Medium",
                         "source": "smb-os-discovery",
@@ -325,10 +389,10 @@ def detect_os_details(ip, services=None, vendor="Unknown", device_type="Unknown 
         hostname=hostname,
     )
     if str(inferred.get("name", "")).strip().lower() == "windows" and _service_has_port(services, 445):
-        smb_name = _detect_windows_via_smb(ip)
-        if smb_name:
+        smb_detected = _detect_windows_via_smb(ip)
+        if smb_detected:
             return {
-                "name": smb_name,
+                "name": smb_detected,
                 "family": "Windows",
                 "accuracy": "Medium",
                 "source": "smb-os-discovery",

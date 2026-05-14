@@ -1,5 +1,5 @@
 import React from "react";
-import brandLogo from "../assets/STLOGO.png";
+import brandLogo from "../assets/Shadow_logo2.png";
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const GlobeIcon = ({ size = 17 }) => (
@@ -31,26 +31,7 @@ const LoginIcon = () => (
     <polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" />
   </svg>
 );
-const SunIcon = ({ size = 17 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <circle cx="12" cy="12" r="5" />
-    <line x1="12" y1="1" x2="12" y2="3" />
-    <line x1="12" y1="21" x2="12" y2="23" />
-    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-    <line x1="1" y1="12" x2="3" y2="12" />
-    <line x1="21" y1="12" x2="23" y2="12" />
-    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-  </svg>
-);
-const MoonIcon = ({ size = 17 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-  </svg>
-);
-
-const Navbar = ({ activeNav, onNavClick, theme, toggleTheme, onLogout, authUser }) => {
+const Navbar = ({ activeNav, onNavClick, onLogout, authUser }) => {
   const tabs = [
     { name: "Scan", icon: <GlobeIcon /> },
     { name: "Vulns", icon: <ShieldIcon /> },
@@ -59,34 +40,48 @@ const Navbar = ({ activeNav, onNavClick, theme, toggleTheme, onLogout, authUser 
   ];
 
   return (
-    <nav className={`fixed top-0 left-0 right-0 z-50 w-full ${theme === 'dark' ? 'bg-[#020617]/95 border-cyan-900' : 'bg-white/95 border-gray-200'} backdrop-blur-md px-16 py-3 flex items-center justify-between`}>
+    <nav className="fixed top-0 left-0 right-0 z-50 w-full" style={{ background: 'var(--navbar-bg)', borderBottom: '1px solid var(--navbar-border)', backdropFilter: 'blur(16px)', padding: '0 5vw', height: '64px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
       
       {/* LEFT - LOGO */}
       <button
         type="button"
         onClick={() => onNavClick("Scan")}
-        className="ml-4 flex items-center transition"
+        className="ml-4 flex items-center transition hover:opacity-80"
       >
-        <img
-          src={brandLogo}
-          alt="ShadowTrace"
-          className="h-12 w-auto object-contain"
-        />
+        <div
+          className="flex items-center rounded-[16px] px-3 py-1.5"
+          // style={{
+          //   background: "rgba(218, 212, 205, 0.72)",
+          //   border: "1px solid rgba(255,255,255,0.55)",
+          //   boxShadow: "inset 0 1px 0 rgba(255,255,255,0.35)",
+          //   backdropFilter: "blur(6px)",
+          // }}
+        >
+          <img
+            src={brandLogo}
+            alt="ShadowTrace"
+            className="h-40 w-auto object-contain"
+          />
+        </div>
       </button>
 
-      {/* RIGHT - NAV TABS, THEME TOGGLE AND LOGOUT BUTTON */}
-      <div className="flex items-center gap-5 ml-auto">
-        <div className="flex items-center gap-4">
+      {/* RIGHT - NAV TABS AND LOGOUT BUTTON */}
+      <div className="flex items-center gap-3 ml-auto">
+        <div className="flex items-center gap-2">
           {tabs.map((tab) => (
             <button
               key={tab.name}
               onClick={() => onNavClick(tab.name)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200
-                ${
-                  activeNav === tab.name
-                    ? `${theme === 'dark' ? 'bg-cyan-900/40 text-cyan-400 border border-cyan-500' : 'bg-blue-100 text-blue-600 border border-blue-300'}`
-                    : `${theme === 'dark' ? 'text-gray-400 hover:text-white hover:bg-gray-800' : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'}`
-                }`}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg transition-all duration-200"
+              style={{
+                fontFamily: 'var(--heading)',
+                fontSize: '13px',
+                fontWeight: '600',
+                letterSpacing: '0.04em',
+                color: activeNav === tab.name ? 'var(--accent)' : 'var(--navbar-text)',
+                background: activeNav === tab.name ? 'var(--navbar-bg-active)' : 'transparent',
+                border: activeNav === tab.name ? '1px solid var(--navbar-border-active)' : '1px solid transparent',
+              }}
             >
               {tab.icon}
               {tab.name}
@@ -94,14 +89,18 @@ const Navbar = ({ activeNav, onNavClick, theme, toggleTheme, onLogout, authUser 
           ))}
         </div>
         <button
-          onClick={toggleTheme}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-[var(--navbar-text-secondary)] hover:text-[var(--navbar-text)] hover:bg-[var(--navbar-bg-active)] transition"
-        >
-          {theme === 'light' ? <MoonIcon /> : <SunIcon />}
-        </button>
-        <button
           onClick={onLogout}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition ${theme === 'dark' ? 'border-purple-500 text-purple-400 hover:bg-purple-900/30' : 'border-blue-300 text-blue-600 hover:bg-blue-50'}`}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg transition"
+          style={{
+            fontFamily: 'var(--heading)',
+            fontSize: '13px',
+            fontWeight: '600',
+            letterSpacing: '0.04em',
+            color: 'var(--accent)',
+            background: 'transparent',
+            border: '1.5px solid var(--navbar-border-active)',
+            cursor: 'pointer',
+          }}
           title={authUser?.email ? `Logout ${authUser.email}` : "Logout"}
         >
           <LoginIcon />
